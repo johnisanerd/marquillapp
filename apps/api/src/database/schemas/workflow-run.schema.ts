@@ -7,6 +7,7 @@ import type { RenderAttemptUsage } from '../../document-render/render-usage.type
 // Type-only, and to the leaf module rather than the engine barrel: the engine
 // imports RunKind from here, so a value import either way would be a cycle.
 import type {
+  AcceptedCandidate,
   BuildInput,
   DocumentCheck,
 } from '../../workflow/engine/workflow.types';
@@ -72,6 +73,12 @@ export class WorkflowRun extends Document {
   // never in events and never in logs.
   @Prop({ type: [Object], default: undefined })
   documentChecks?: DocumentCheck[];
+
+  // DOCUMENT only: the job's one checkpoint, the latest statically clean
+  // Candidate Source RENDER_PDF was about to render. A job retry resumes from
+  // it instead of calling the model again.
+  @Prop({ type: Object })
+  acceptedCandidate?: AcceptedCandidate;
 
   // Attempt-scoped: reset at the start of each attempt so a whole-job retry
   // cannot double-count. Only the winning attempt's total is ever debited.

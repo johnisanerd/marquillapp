@@ -68,6 +68,17 @@ export interface DocumentDraftState {
 }
 
 /**
+ * DOCUMENT: the job's only checkpoint (spec §7.3). `RENDER_PDF` saves the
+ * latest statically clean Candidate Source before it renders it, so a job
+ * retry after a render outage resumes from it without calling the model.
+ */
+export interface AcceptedCandidate extends DocumentDraftState {
+  /** The draft's title, on an INITIAL run. */
+  title?: string;
+  savedAt: Date;
+}
+
+/**
  * One check of a Candidate Source, recorded on the run with its full violation
  * list (spec §6.2): the only place violation details are kept.
  */
@@ -156,11 +167,22 @@ export interface RunRecordHandle {
   saveResearchContext(research: ResearchResult): Promise<void>;
   recordRenderAttempt(usage: RenderAttemptUsage): Promise<void>;
   recordDocumentCheck(check: DocumentCheck): Promise<void>;
+  saveAcceptedCandidate(accepted: AcceptedCandidate): Promise<void>;
+  /** The checkpoint an earlier job attempt of this run saved, if any. */
+  readAcceptedCandidate(): Promise<AcceptedCandidate | undefined>;
   getLatestCompletedResearch(
     artifactId: string,
   ): Promise<ResearchResult | undefined>;
   complete(creditsUsed: number): Promise<void>;
   fail(failureCode: FailureCode, failureReason: string): Promise<void>;
+}
+
+/**
+ * The job attempt's wall-clock bound (spec §7.5), checked before each DOCUMENT
+ * model call and render session. Throws transient once it has passed.
+ */
+export interface RunDeadlineGuard {
+  assertTimeLeft(step: WorkflowStep, before: string): void;
 }
 
 /**
@@ -175,6 +197,7 @@ export interface StepContext {
   designSystems: DesignSystemResolver;
   renderer: DocumentRenderer;
   objects: DocumentObjectStore;
+  deadline: RunDeadlineGuard;
   /** `step.progress` only. Lifecycle events are the core's job. */
   emit: (event: EmittedEvent) => void;
   run: RunRecordHandle;

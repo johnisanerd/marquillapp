@@ -66,6 +66,9 @@ export const generateStep: StepHandler = async (state, ctx) => {
  * the shared Repair budget is spent (spec §7.1, §7.2). Every check's full
  * result is recorded on the run; the client sees only phases and counts.
  *
+ * A job retry after `RENDER_PDF` saved a checkpoint returns it without calling
+ * the model, so the draft is neither rewritten nor billed again (spec §7.3).
+ *
  * A call cut off at the token cap is `document.truncated` and spends nothing.
  */
 async function generateDocument(
@@ -86,6 +89,22 @@ async function generateDocument(
   const hooks = meteredHooks(ctx);
   const label = `artifact ${artifactId} v${version}`;
 
+  const accepted = await ctx.run.readAcceptedCandidate();
+  if (accepted) {
+    ctx.logger.log(`GENERATE resumed ${label} from its accepted candidate`);
+    return {
+      ...(accepted.title !== undefined
+        ? { generatedTitle: accepted.title }
+        : {}),
+      draft: {
+        commentary: accepted.commentary,
+        candidate: accepted.candidate,
+        repairsSpent: accepted.repairsSpent,
+      },
+    };
+  }
+
+  ctx.deadline.assertTimeLeft(WorkflowStep.GENERATE, `the draft of ${label}`);
   ctx.emit({
     type: RunEventType.STEP_PROGRESS,
     data: { step: WorkflowStep.GENERATE, phase: 'draft' },

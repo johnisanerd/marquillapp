@@ -267,6 +267,50 @@ describe('WorkflowRunService', () => {
       expect(update).toEqual({ $push: { documentChecks: check } });
     });
 
+    it("should save the accepted candidate as the run's checkpoint", async () => {
+      const accepted = {
+        commentary: 'Swipe through.',
+        candidate: '<html></html>',
+        repairsSpent: 1,
+        title: 'Three fixes',
+        savedAt: new Date('2026-10-02T00:00:00.000Z'),
+      };
+
+      await service.handleFor(fixtures.runId).saveAcceptedCandidate(accepted);
+
+      const [filter, update] = mocks.workflowRunModel.updateOne.mock
+        .calls[0] as [{ _id: unknown }, unknown];
+      expect(filter._id).toBeInstanceOf(Types.ObjectId);
+      expect(update).toEqual({ $set: { acceptedCandidate: accepted } });
+    });
+
+    it('should read back the checkpoint an earlier attempt saved', async () => {
+      const accepted = { commentary: 'c', candidate: 'h', repairsSpent: 0 };
+      const exec = jest.fn().mockResolvedValue({ acceptedCandidate: accepted });
+      const lean = jest.fn().mockReturnValue({ exec });
+      const select = jest.fn().mockReturnValue({ lean });
+      mocks.workflowRunModel.findById.mockReturnValue({ select });
+
+      await expect(
+        service.handleFor(fixtures.runId).readAcceptedCandidate(),
+      ).resolves.toEqual(accepted);
+      expect(mocks.workflowRunModel.findById).toHaveBeenCalledWith(
+        fixtures.runId,
+      );
+      expect(select).toHaveBeenCalledWith({ acceptedCandidate: 1 });
+    });
+
+    it('should read no checkpoint when no attempt saved one', async () => {
+      const exec = jest.fn().mockResolvedValue({});
+      mocks.workflowRunModel.findById.mockReturnValue({
+        select: () => ({ lean: () => ({ exec }) }),
+      });
+
+      await expect(
+        service.handleFor(fixtures.runId).readAcceptedCandidate(),
+      ).resolves.toBeUndefined();
+    });
+
     it('should mark the run COMPLETED with the winning attempt total', async () => {
       await service.handleFor(fixtures.runId).complete(38);
 

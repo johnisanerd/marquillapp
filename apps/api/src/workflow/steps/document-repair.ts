@@ -104,6 +104,7 @@ export async function repair(
   }
 
   const round = repairsSpent + 1;
+  ctx.deadline.assertTimeLeft(step, `Repair round ${round} of ${label}`);
   ctx.emit({
     type: RunEventType.STEP_PROGRESS,
     data: { step, phase: 'repair', round, violations: violations.length },

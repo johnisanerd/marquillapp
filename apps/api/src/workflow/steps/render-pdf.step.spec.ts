@@ -3,6 +3,9 @@ jest.mock(
   () => ({ RunKind: { INITIAL: 'INITIAL', REFINE: 'REFINE' } }),
   { virtual: true },
 );
+jest.mock('node:timers/promises', () => ({
+  setTimeout: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('../../document-source/candidate-check', () => ({
   check: jest.fn(),
 }));
@@ -13,6 +16,7 @@ jest.mock('../../document-render/judge', () => ({
   judge: jest.fn(),
 }));
 
+import { setTimeout as sleep } from 'node:timers/promises';
 import { judge } from '../../document-render/judge';
 import { check } from '../../document-source/candidate-check';
 import { RenderSessionError } from '../../document-render/render-session.error';
@@ -48,7 +52,9 @@ const makeStep = () => {
   const run = {
     recordRenderAttempt: jest.fn().mockResolvedValue(undefined),
     recordDocumentCheck: jest.fn().mockResolvedValue(undefined),
+    saveAcceptedCandidate: jest.fn().mockResolvedValue(undefined),
   };
+  const deadline = { assertTimeLeft: jest.fn() };
   const meter = { record: jest.fn() };
   const emit = jest.fn();
   const logger = { error: jest.fn(), warn: jest.fn() };
@@ -59,6 +65,7 @@ const makeStep = () => {
   };
   const ctx = {
     agent,
+    deadline,
     renderer,
     objects,
     run,
@@ -77,6 +84,7 @@ const makeStep = () => {
       designSystem: { id: 'margin', version: 2 },
     },
     designSystem: { definition, fragment: 'FRAGMENT' },
+    generatedTitle: 'Three fixes',
     draft: {
       commentary: 'Swipe through.',
       candidate: CANDIDATE,
@@ -96,7 +104,7 @@ const makeStep = () => {
 
   return {
     ctx,
-    mocks: { agent, renderer, objects, run, meter, emit, logger },
+    mocks: { agent, deadline, renderer, objects, run, meter, emit, logger },
     fixtures: { state, definition, session },
   };
 };
@@ -434,7 +442,7 @@ describe('renderPdfStep', () => {
   });
 
   describe('on other findings', () => {
-    it('should fail transiently as render.unavailable on a retry finding, absorbing the session', async () => {
+    it('should fail transiently as render.unavailable when the in-step retry also fails, absorbing both sessions', async () => {
       mockedJudge.mockReturnValue([
         { code: 'render.timeout', detail: 'did not finish' },
       ]);
@@ -443,9 +451,14 @@ describe('renderPdfStep', () => {
         retryable: true,
         code: 'render.unavailable',
       });
-      expect(mocks.run.recordRenderAttempt).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'RETRY', billed: false }),
-      );
+      expect(mocks.renderer.render).toHaveBeenCalledTimes(2);
+      expect(
+        attemptsOf(mocks).map(({ outcome, billed }) => [outcome, billed]),
+      ).toEqual([
+        ['RETRY', false],
+        ['RETRY', false],
+      ]);
+      expect(mocks.agent.repairDocument).not.toHaveBeenCalled();
     });
 
     it('should prefer a retry over repair findings a failed font load can cause', async () => {
@@ -491,6 +504,156 @@ describe('renderPdfStep', () => {
       expect(JSON.stringify(mocks.emit.mock.calls)).not.toContain(
         'secret detail',
       );
+    });
+  });
+
+  describe('in-step retry', () => {
+    it('should render the same Document Source again after a pause, spending no Repair', async () => {
+      mockedJudge.mockReturnValueOnce([
+        { code: 'render.timeout', detail: 'did not finish' },
+      ]);
+
+      const patch = await renderPdfStep(fixtures.state, ctx);
+
+      expect(mockedAssemble).toHaveBeenCalledTimes(1);
+      expect(mocks.renderer.render).toHaveBeenCalledTimes(2);
+      expect(mocks.renderer.render).toHaveBeenNthCalledWith(
+        2,
+        fixtures.definition,
+        SOURCE,
+      );
+      expect(sleep).toHaveBeenCalledWith(2000);
+      expect(mocks.agent.repairDocument).not.toHaveBeenCalled();
+      expect(patch.draft?.repairsSpent).toBe(0);
+    });
+
+    it('should announce the retry with its cause between the two sessions', async () => {
+      mockedJudge.mockReturnValueOnce([
+        { code: 'render.timeout', detail: 'did not finish' },
+      ]);
+
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(progressOf(mocks)).toEqual([
+        { step: 'RENDER_PDF', phase: 'render', session: 1 },
+        { step: 'RENDER_PDF', phase: 'retry', cause: 'timeout' },
+        { step: 'RENDER_PDF', phase: 'render', session: 2 },
+      ]);
+    });
+
+    it('should name fonts as the cause when a declared face failed to load', async () => {
+      mockedJudge.mockReturnValueOnce([
+        { code: 'render.fonts.failed', detail: 'Manrope failed' },
+        { code: 'render.fonts.fallback', detail: 'page 1: fallback' },
+      ]);
+
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(progressOf(mocks)).toContainEqual({
+        step: 'RENDER_PDF',
+        phase: 'retry',
+        cause: 'fonts',
+      });
+    });
+
+    it('should absorb the retried session and bill only the one with a verdict', async () => {
+      mockedJudge.mockReturnValueOnce([
+        { code: 'render.timeout', detail: 'did not finish' },
+      ]);
+
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(
+        attemptsOf(mocks).map(({ outcome, billed }) => [outcome, billed]),
+      ).toEqual([
+        ['RETRY', false],
+        ['PASSED', true],
+      ]);
+      expect(mocks.meter.record).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'pdf_render', amount: 1 }),
+      );
+    });
+
+    it('should retry once per Document Source, so a repaired source gets its own retry', async () => {
+      mockedJudge
+        .mockReturnValueOnce([{ code: 'render.timeout', detail: 'slow' }])
+        .mockReturnValueOnce([SAFE_AREA])
+        .mockReturnValueOnce([{ code: 'render.timeout', detail: 'slow' }])
+        .mockReturnValueOnce([]);
+
+      await expect(renderPdfStep(fixtures.state, ctx)).resolves.toMatchObject({
+        draft: { candidate: REPAIRED, repairsSpent: 1 },
+      });
+      expect(mocks.renderer.render).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  describe('the checkpoint', () => {
+    it('should save the Candidate Source, Repairs spent, commentary and title before rendering', async () => {
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(mocks.run.saveAcceptedCandidate).toHaveBeenCalledTimes(1);
+      expect(mocks.run.saveAcceptedCandidate).toHaveBeenCalledWith({
+        candidate: CANDIDATE,
+        repairsSpent: 0,
+        commentary: 'Swipe through.',
+        title: 'Three fixes',
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- an asymmetric matcher
+        savedAt: expect.any(Date),
+      });
+      expect(
+        mocks.run.saveAcceptedCandidate.mock.invocationCallOrder[0],
+      ).toBeLessThan(mocks.renderer.render.mock.invocationCallOrder[0]);
+    });
+
+    it('should save the repaired source before rendering it', async () => {
+      mockedJudge.mockReturnValueOnce([SAFE_AREA]);
+
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(mocks.run.saveAcceptedCandidate).toHaveBeenLastCalledWith(
+        expect.objectContaining({ candidate: REPAIRED, repairsSpent: 1 }),
+      );
+    });
+
+    it('should not save it again for an in-step retry of the same source', async () => {
+      mockedJudge.mockReturnValueOnce([
+        { code: 'render.timeout', detail: 'did not finish' },
+      ]);
+
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(mocks.run.saveAcceptedCandidate).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('the run deadline', () => {
+    it('should check it before every render session and Repair', async () => {
+      mockedJudge.mockReturnValueOnce([SAFE_AREA]);
+
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(
+        mocks.deadline.assertTimeLeft.mock.calls.map(
+          ([step, before]: [string, string]) => `${step}: ${before}`,
+        ),
+      ).toEqual([
+        'RENDER_PDF: render session 1 of artifact artifact-1 v3',
+        'RENDER_PDF: Repair round 1 of artifact artifact-1 v3',
+        'RENDER_PDF: render session 2 of artifact artifact-1 v3',
+      ]);
+    });
+
+    it('should start no session once it has passed', async () => {
+      const passed = new WorkflowError('past the deadline', {
+        retryable: true,
+      });
+      mocks.deadline.assertTimeLeft.mockImplementation(() => {
+        throw passed;
+      });
+
+      await expect(renderPdfStep(fixtures.state, ctx)).rejects.toBe(passed);
+      expect(mocks.renderer.render).not.toHaveBeenCalled();
     });
   });
 
