@@ -32,6 +32,7 @@ import { parseDesignSystemDefinition } from '../design-system/design-system-defi
 import { DESIGN_SYSTEM_SEED_DIR } from '../design-system/design-system.constants';
 import type { RenderFacts } from '../document-render/render-facts';
 import type { RenderSessionResult } from '../document-render/render-session';
+import type { RenderAttemptUsage } from '../document-render/render-usage.types';
 import type { BuildInput, DocumentCheck } from './engine/workflow.types';
 import { ArtifactRunProcessor } from './workers/artifact-run.worker.handler';
 
@@ -41,8 +42,8 @@ import { ArtifactRunProcessor } from './workers/artifact-run.worker.handler';
  * agent and renderer. The renderer replays probe facts the real session
  * recorded (`test:render`), so the judge decides on real measurements.
  *
- * There is no render Repair yet (#168), so the paths are: clean; a static
- * Repair that succeeds; static Repairs that run out; a render finding;
+ * The paths: clean; a static Repair that succeeds; static Repairs that run
+ * out; a render Repair that succeeds; render Repairs that run out;
  * truncation of the draft or a Repair; a render that must be retried;
  * egress; and a stale contract.
  * Each asserts step events, `step.progress`, meter records and `failureCode`.
@@ -181,7 +182,9 @@ const makeRun = () => {
     runId: 'run-1',
     setCurrentStep: jest.fn().mockResolvedValue(undefined),
     saveResearchContext: jest.fn().mockResolvedValue(undefined),
-    recordRenderAttempt: jest.fn().mockResolvedValue(undefined),
+    recordRenderAttempt: jest
+      .fn<Promise<void>, [RenderAttemptUsage]>()
+      .mockResolvedValue(undefined),
     recordDocumentCheck: jest
       .fn<Promise<void>, [DocumentCheck]>()
       .mockResolvedValue(undefined),
@@ -492,23 +495,137 @@ describe('DOCUMENT generation, end to end', () => {
     });
   });
 
-  describe('a render finding, with no Repair yet', () => {
+  describe('a render finding that one render Repair fixes', () => {
+    beforeEach(() => {
+      run.renderer.render
+        .mockResolvedValueOnce(session(recorded('safe-area')))
+        .mockResolvedValueOnce(
+          session(recorded('margin-sample'), {
+            usage: { durationMs: 16_000, units: 1 },
+          }),
+        );
+    });
+
+    it('should repair in RENDER_PDF, re-render, and promote the repaired source', async () => {
+      await expect(runJob(run)).resolves.toBeUndefined();
+
+      expect(lifecycle(run)).toEqual([
+        'run.started',
+        'step.started RESOLVE_INPUT',
+        'step.completed RESOLVE_INPUT',
+        'step.started GENERATE',
+        'step.completed GENERATE',
+        'step.started RENDER_PDF',
+        'step.completed RENDER_PDF',
+        'step.started PERSIST_VERSION',
+        'step.completed PERSIST_VERSION',
+        'run.completed',
+      ]);
+      const findings =
+        run.runHandle.recordDocumentCheck.mock.calls[1][0].violations.length;
+      expect(progress(run)).toEqual([
+        { step: 'GENERATE', phase: 'draft' },
+        { step: 'RENDER_PDF', phase: 'render', session: 1 },
+        { step: 'RENDER_PDF', phase: 'repair', round: 1, violations: findings },
+        { step: 'RENDER_PDF', phase: 'render', session: 2 },
+      ]);
+      const [[input]] = run.agent.repairDocument.mock.calls;
+      expect(input.candidate).toBe(MARGIN_SAMPLE);
+      expect(input.violations.violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'page.safeArea' }),
+        ]),
+      );
+      expect(run.artifacts.promoteVersion).toHaveBeenCalledTimes(1);
+    });
+
+    it('should statically re-check the re-emitted source before rendering it', async () => {
+      await runJob(run);
+
+      expect(
+        run.runHandle.recordDocumentCheck.mock.calls.map(([check]) => [
+          check.phase,
+          check.violations.length > 0,
+        ]),
+      ).toEqual([
+        ['static', false],
+        ['render', true],
+        ['static', false],
+        ['render', false],
+      ]);
+    });
+
+    it('should bill two LLM turns and one pdf_render over both judged sessions', async () => {
+      await runJob(run);
+
+      expect(meterRecords(run)).toEqual(['llm', 'llm', 'pdf_render']);
+      expect(run.creditMeter.toCredits).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'pdf_render',
+          amount: 2,
+          detail: { browserless: { durationMs: 31_000, units: 2 } },
+        }),
+      );
+      expect(
+        run.runHandle.recordRenderAttempt.mock.calls.map(([attempt]) => [
+          attempt.outcome,
+          attempt.billed,
+        ]),
+      ).toEqual([
+        ['FINDINGS', true],
+        ['PASSED', true],
+      ]);
+      expect(run.creditMeter.debit).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('render findings that outlast the Repair budget', () => {
     beforeEach(() => {
       run.renderer.render.mockResolvedValue(session(recorded('safe-area')));
     });
 
-    it('should fail RENDER_PDF as document.repair_exhausted with a billed session and nothing uploaded', async () => {
+    it('should fail RENDER_PDF as document.repair_exhausted after three sessions and two Repairs', async () => {
       await runJob(run);
 
-      expect(lifecycle(run)).toContain('step.failed RENDER_PDF');
+      expect(lifecycle(run)).toEqual([
+        'run.started',
+        'step.started RESOLVE_INPUT',
+        'step.completed RESOLVE_INPUT',
+        'step.started GENERATE',
+        'step.completed GENERATE',
+        'step.started RENDER_PDF',
+        'step.failed RENDER_PDF',
+        'run.failed',
+      ]);
+      expect(
+        progress(run).map(({ phase, round, session: n }) =>
+          [phase, round ?? n].join(' '),
+        ),
+      ).toEqual([
+        'draft ',
+        'render 1',
+        'repair 1',
+        'render 2',
+        'repair 2',
+        'render 3',
+      ]);
       expect(failedWith(run)).toMatchObject({
         code: 'document.repair_exhausted',
       });
-      expect(run.runHandle.recordRenderAttempt).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'FINDINGS', billed: true }),
-      );
+      expect(run.renderer.render).toHaveBeenCalledTimes(3);
+      expect(run.agent.repairDocument).toHaveBeenCalledTimes(2);
       expect(run.objects.put).not.toHaveBeenCalled();
       expect(run.artifacts.promoteVersion).not.toHaveBeenCalled();
+    });
+
+    it('should record every session as billed, meter three LLM turns, and commit nothing', async () => {
+      await runJob(run);
+
+      expect(run.runHandle.recordRenderAttempt).toHaveBeenCalledTimes(3);
+      for (const [attempt] of run.runHandle.recordRenderAttempt.mock.calls) {
+        expect(attempt).toMatchObject({ outcome: 'FINDINGS', billed: true });
+      }
+      expect(meterRecords(run)).toEqual(['llm', 'llm', 'llm']);
       expect(run.creditMeter.debit).not.toHaveBeenCalled();
     });
   });
