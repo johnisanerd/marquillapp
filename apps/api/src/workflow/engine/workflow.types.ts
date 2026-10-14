@@ -104,6 +104,11 @@ export interface RunState {
   content?: ArtifactContent;
   /** DOCUMENT: the pinned Design System. */
   designSystem?: ResolvedDesignSystem;
+  /**
+   * DOCUMENT REFINE: the base's Candidate Source, read from R2 and verified
+   * against its `candidateSha256` (spec §6.5).
+   */
+  baseCandidate?: string;
   /** DOCUMENT: the statically clean Candidate Source and its commentary. */
   draft?: DocumentDraftState;
   /** DOCUMENT: the uploaded Document Version, without its commentary. */
@@ -136,6 +141,8 @@ export interface DocumentRenderer {
 /** DOCUMENT-only: the private object store a Document Version lives in. */
 export interface DocumentObjectStore {
   put(key: string, body: Buffer, contentType: string): Promise<void>;
+  /** The object's bytes, or `null` when it does not exist. */
+  get(key: string): Promise<Buffer | null>;
 }
 
 /** DOCUMENT-only: status-blind reads of an exact Design System Version. */

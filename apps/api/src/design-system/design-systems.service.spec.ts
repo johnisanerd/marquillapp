@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { join } from 'node:path';
 import { DesignSystemStatus } from '../database/schemas/design-system.schema';
 import { readSeedFiles } from './design-system-seed';
@@ -284,6 +288,98 @@ describe('DesignSystemsService', () => {
       await expect(service.resolve('margin', 9)).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+  });
+
+  describe('pinForRefine', () => {
+    const retired = recordOf('schematic', {
+      version: 0,
+      status: DesignSystemStatus.RETIRED,
+    });
+    const stale = {
+      ...recordOf('broadside', {
+        version: 0,
+        status: DesignSystemStatus.SUPERSEDED,
+      }),
+      contract: 2,
+    };
+
+    beforeEach(async () => {
+      ({ service, mocks } = makeService([...allActive(), retired, stale]));
+      await service.onModuleInit();
+    });
+
+    const unavailable = async (pin: { id: string; version: number }) => {
+      const error = await service
+        .pinForRefine(pin)
+        .catch((e: unknown) => e as ConflictException);
+      expect(error).toBeInstanceOf(ConflictException);
+      return (error as ConflictException).getResponse();
+    };
+
+    it("should carry the base's exact pin when it is ACTIVE", async () => {
+      await expect(
+        service.pinForRefine({ id: 'margin', version: 1 }),
+      ).resolves.toEqual({ id: 'margin', version: 1 });
+    });
+
+    it("should carry the base's exact pin when it is RETIRED", async () => {
+      await expect(
+        service.pinForRefine({ id: 'schematic', version: 0 }),
+      ).resolves.toEqual({ id: 'schematic', version: 0 });
+    });
+
+    it('should be a 409 design_system.unavailable naming the pin when its contract is stale', async () => {
+      await expect(
+        unavailable({ id: 'broadside', version: 0 }),
+      ).resolves.toMatchObject({
+        statusCode: 409,
+        code: 'design_system.unavailable',
+        designSystemId: 'broadside',
+        designSystemVersion: 0,
+        designSystemName: 'Broadside',
+      });
+    });
+
+    it('should be a 409 design_system.unavailable when the pin does not resolve', async () => {
+      await expect(
+        unavailable({ id: 'margin', version: 9 }),
+      ).resolves.toMatchObject({
+        statusCode: 409,
+        code: 'design_system.unavailable',
+        designSystemId: 'margin',
+        designSystemVersion: 9,
+        designSystemName: 'Margin',
+      });
+    });
+
+    it('should name the pin by its slug when the system has no ACTIVE version', async () => {
+      await expect(
+        unavailable({ id: 'gone', version: 1 }),
+      ).resolves.toMatchObject({ designSystemName: 'gone' });
+    });
+
+    it("should pin the requested slug's ACTIVE version when switching", async () => {
+      await expect(
+        service.pinForRefine({ id: 'broadside', version: 0 }, 'afterglow'),
+      ).resolves.toEqual({ id: 'afterglow', version: 1 });
+      expect(mocks.designSystemModel.findOne).not.toHaveBeenCalled();
+    });
+
+    it('should be a 400 when switching to a slug that is not ACTIVE or is unlisted', async () => {
+      await expect(
+        service.pinForRefine({ id: 'margin', version: 1 }, 'nope'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      const unlisted = UNLISTED_DESIGN_SYSTEMS as string[];
+      unlisted.push('afterglow');
+      try {
+        await expect(
+          service.pinForRefine({ id: 'margin', version: 1 }, 'afterglow'),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      } finally {
+        unlisted.pop();
+      }
     });
   });
 });

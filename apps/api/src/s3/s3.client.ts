@@ -79,6 +79,21 @@ export async function getFile(key: string): Promise<Buffer> {
   return Buffer.from(await response.Body.transformToByteArray());
 }
 
+/** `getFile`, except that an object that does not exist is `null`. */
+export async function findFile(key: string): Promise<Buffer | null> {
+  try {
+    return await getFile(key);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.name === 'NotFound' || error.name === 'NoSuchKey')
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 export async function deleteFile(key: string): Promise<void> {
   const { client, bucket } = getClient();
   await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));

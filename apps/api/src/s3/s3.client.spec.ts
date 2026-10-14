@@ -31,6 +31,7 @@ import { getSignedUrl as awsGetSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   uploadFile,
   getFile,
+  findFile,
   deleteFile,
   getSignedUrl,
   getSignedUploadUrl,
@@ -330,6 +331,40 @@ describe('S3 client', () => {
     it('should propagate non-NotFound errors from the S3 send call', async () => {
       mockSend.mockRejectedValueOnce(new Error('access denied'));
       await expect(headFile('some/key')).rejects.toThrow('access denied');
+    });
+  });
+
+  describe('findFile', () => {
+    it('should return the object body as a Buffer when the object exists', async () => {
+      mockSend.mockResolvedValueOnce({
+        Body: {
+          transformToByteArray: jest
+            .fn()
+            .mockResolvedValue(new Uint8Array([4, 5])),
+        },
+      });
+
+      await expect(findFile('artifacts/a/1/candidate.html')).resolves.toEqual(
+        Buffer.from([4, 5]),
+      );
+      expect(GetObjectCommand).toHaveBeenCalledWith({
+        Bucket: BUCKET,
+        Key: 'artifacts/a/1/candidate.html',
+      });
+    });
+
+    it('should return null when the object does not exist', async () => {
+      const noSuchKey = new Error('no such key');
+      noSuchKey.name = 'NoSuchKey';
+      mockSend.mockRejectedValueOnce(noSuchKey);
+
+      await expect(findFile('missing/key')).resolves.toBeNull();
+    });
+
+    it('should propagate any other read failure', async () => {
+      mockSend.mockRejectedValueOnce(new Error('connection reset'));
+
+      await expect(findFile('some/key')).rejects.toThrow('connection reset');
     });
   });
 

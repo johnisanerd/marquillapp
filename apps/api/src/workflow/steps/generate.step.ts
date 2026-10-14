@@ -1,4 +1,5 @@
 import { ContentValidationError } from '../../agent/agent-runner.error';
+import type { DocumentRefineInput } from '../../agent/agent-runner.interface';
 import { ArtifactType, RunKind } from '../../database/schemas';
 import { RunEventType } from '../engine/run-event.types';
 import { terminal } from '../engine/workflow.error';
@@ -25,8 +26,8 @@ import {
  * - **retryable** — an LLM transport fault, which `src/llm` already classified
  *   and the engine's `toWorkflowError` reads straight off the `LLMError`.
  *
- * DOCUMENT drafts a Candidate Source and repairs it until it is statically
- * clean (spec §7.1).
+ * DOCUMENT drafts a Candidate Source, from the brief or by rewriting the
+ * refine base, and repairs it until it is statically clean (spec §7.1).
  */
 export const generateStep: StepHandler = async (state, ctx) => {
   if (state.input.type === ArtifactType.DOCUMENT) {
@@ -104,6 +105,8 @@ async function generateDocument(
     };
   }
 
+  const refine = includeTitle ? undefined : refineBaseOf(state, label);
+
   ctx.deadline.assertTimeLeft(WorkflowStep.GENERATE, `the draft of ${label}`);
   ctx.emit({
     type: RunEventType.STEP_PROGRESS,
@@ -120,6 +123,7 @@ async function generateDocument(
         fragment,
         includeTitle,
         maxEnvelopeRepairs: draftAllowance,
+        ...(refine ? { refine } : {}),
       },
       hooks,
     ),
@@ -140,5 +144,24 @@ async function generateDocument(
   return {
     ...(draft.title !== undefined ? { generatedTitle: draft.title } : {}),
     draft: { commentary: draft.commentary, candidate, repairsSpent },
+  };
+}
+
+/**
+ * A refinement rewrites its base (spec §6.5): the Candidate Source
+ * `RESOLVE_INPUT` verified, the base's commentary, and the feedback.
+ */
+function refineBaseOf(state: RunState, label: string): DocumentRefineInput {
+  const { refine, baseCandidate } = state;
+  if (!refine || baseCandidate === undefined) {
+    // RESOLVE_INPUT seeds both for every DOCUMENT REFINE, so their absence is
+    // a wiring bug a replay would reproduce exactly.
+    throw terminal(`GENERATE reached ${label} without its refine base`);
+  }
+  const { commentary } = refine.priorContent;
+  return {
+    candidate: baseCandidate,
+    ...(commentary !== undefined ? { commentary } : {}),
+    feedback: refine.feedback,
   };
 }

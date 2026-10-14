@@ -245,6 +245,46 @@ describe('generateStep', () => {
       expect(mockedCheck).toHaveBeenCalledWith(fixtures.definition, draft.html);
     });
 
+    it("should draft a refinement from the base's Candidate Source, commentary and feedback, without a title", async () => {
+      const base = '<!doctype html><html><body>base</body></html>';
+      const state = {
+        ...fixtures.documentState,
+        input: { ...fixtures.documentState.input, kind: 'REFINE' },
+        refine: {
+          priorContent: { commentary: 'The original intro.', document: {} },
+          feedback: 'Make page two shorter',
+        },
+        baseCandidate: base,
+      } as unknown as RunState;
+
+      await generateStep(state, ctx);
+
+      expect(mocks.agent.generateDocument).toHaveBeenCalledWith(
+        expect.objectContaining({
+          includeTitle: false,
+          fragment: 'FRAGMENT',
+          refine: {
+            candidate: base,
+            commentary: 'The original intro.',
+            feedback: 'Make page two shorter',
+          },
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('should fail terminally when a refinement reaches it without its base', async () => {
+      const state = {
+        ...fixtures.documentState,
+        input: { ...fixtures.documentState.input, kind: 'REFINE' },
+      } as unknown as RunState;
+
+      await expect(generateStep(state, ctx)).rejects.toMatchObject({
+        retryable: false,
+      });
+      expect(mocks.agent.generateDocument).not.toHaveBeenCalled();
+    });
+
     it('should emit the draft phase with no violation details', async () => {
       await generateStep(fixtures.documentState, ctx);
 

@@ -7,7 +7,6 @@ import {
   documentDraftSchemaFor,
   generationSchemaFor,
 } from '../artifact/schemas';
-import { ArtifactType } from 'src/database/schemas';
 import { LLMProvider, MessageRole } from '../llm/interfaces';
 import type {
   LLMMessage,
@@ -39,6 +38,7 @@ import type {
   Tool,
 } from './agent-runner.interface';
 import {
+  buildDocumentGenerationUserPrompt,
   buildDocumentRepairUserPrompt,
   buildGenerationUserPrompt,
   buildRepairUserPrompt,
@@ -360,7 +360,8 @@ export class AgentRunnerService implements AgentRunner {
   /**
    * One DOCUMENT draft (spec §7.5): a structured completion whose `html` is the
    * Candidate Source. The system message is the generation prompt plus the
-   * pinned fragment. Checking the Candidate Source is the caller's job.
+   * pinned fragment; a refinement's user message also carries its base.
+   * Checking the Candidate Source is the caller's job.
    */
   async generateDocument(
     input: DocumentGenerateInput,
@@ -378,12 +379,7 @@ export class AgentRunnerService implements AgentRunner {
         },
         {
           role: MessageRole.User,
-          content: buildGenerationUserPrompt({
-            type: ArtifactType.DOCUMENT,
-            prompt: input.prompt,
-            stylePreset: input.stylePreset,
-            research: input.research,
-          }),
+          content: buildDocumentGenerationUserPrompt(input),
         },
       ],
       input,

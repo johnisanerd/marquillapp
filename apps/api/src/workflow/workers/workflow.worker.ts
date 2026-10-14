@@ -23,7 +23,7 @@ import { AgentRunnerService } from '../../agent/agent-runner.service';
 import { ArtifactService } from '../../artifact/artifact.service';
 import { DocumentRendererService } from '../../document-render/document-renderer.service';
 import { DesignSystemsService } from '../../design-system/design-systems.service';
-import { uploadFile } from '../../s3';
+import { findFile, uploadFile } from '../../s3';
 import { CreditMeterService } from '../../feature-gating/credit-meter.service';
 import { FeatureGatingService } from '../../feature-gating/feature-gating.service';
 import { RedisService } from '../../redis/redis.service';
@@ -64,6 +64,7 @@ async function bootstrapWorker() {
       put: async (key, body, contentType) => {
         await uploadFile(key, body, contentType);
       },
+      get: findFile,
     },
     creditMeter: app.get(CreditMeterService),
     featureGating: app.get(FeatureGatingService),

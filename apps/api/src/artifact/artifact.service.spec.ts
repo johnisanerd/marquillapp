@@ -33,6 +33,7 @@ jest.mock(
   { virtual: true },
 );
 
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { ArtifactType, VersionStatus } from 'src/database/schemas';
 import { StylePreset } from '../agent/style-presets.config';
@@ -50,7 +51,7 @@ const makeService = () => {
   };
   const postModel = { exists: jest.fn().mockResolvedValue(false) };
   const workflowRuns = { findRunsForVersions: jest.fn().mockResolvedValue([]) };
-  const designSystems = { resolve: jest.fn() };
+  const designSystems = { resolve: jest.fn(), pinForRefine: jest.fn() };
   const service = new ArtifactService(
     artifactModel as any,
     postModel as any,
@@ -69,7 +70,11 @@ const makeService = () => {
       withResearch: false,
     },
   };
-  return { service, mocks: { artifactModel, postModel }, fixtures };
+  return {
+    service,
+    mocks: { artifactModel, postModel, designSystems },
+    fixtures,
+  };
 };
 
 let service: ArtifactService;
@@ -235,15 +240,104 @@ describe('ArtifactService', () => {
       );
     });
 
-    it('should refuse to refine a DOCUMENT before appending anything', async () => {
-      mocks.artifactModel.findOne.mockResolvedValue({
+    describe('when the artifact is a DOCUMENT', () => {
+      const document = {
+        designSystemId: 'schematic',
+        designSystemVersion: 1,
+        sourceKey: 'artifacts/a/1/source.html',
+        sourceSha256: 'a'.repeat(64),
+        candidateKey: 'artifacts/a/1/candidate.html',
+        candidateSha256: 'b'.repeat(64),
+        pdfKey: 'artifacts/a/1/document.pdf',
+        pageCount: 6,
+      };
+      const readyDocument = () => ({
         ...readyArtifact(),
         type: ArtifactType.DOCUMENT,
+        source: { ...readyArtifact().source, designSystemId: 'margin' },
+        versions: [
+          {
+            version: 1,
+            status: VersionStatus.READY,
+            content: { commentary: 'Swipe through.', document },
+          },
+        ],
       });
 
-      await expect(refine()).rejects.toMatchObject({
-        name: 'UnprocessableEntityException',
+      beforeEach(() => {
+        mocks.artifactModel.findOne.mockResolvedValue(readyDocument());
       });
+
+      it("should pin the Attempt to the Current Version's exact pin by default", async () => {
+        mocks.designSystems.pinForRefine.mockResolvedValue({
+          id: 'schematic',
+          version: 1,
+        });
+
+        await expect(refine()).resolves.toMatchObject({
+          version: 2,
+          type: ArtifactType.DOCUMENT,
+          designSystem: { id: 'schematic', version: 1 },
+        });
+        expect(mocks.designSystems.pinForRefine).toHaveBeenCalledWith(
+          { id: 'schematic', version: 1 },
+          undefined,
+        );
+        expect(mocks.artifactModel.updateOne).toHaveBeenCalledWith(
+          expect.anything(),
+          {
+            $push: {
+              versions: expect.objectContaining({ parentVersion: 1 }),
+            },
+          },
+        );
+      });
+
+      it('should pass an explicit switch through to the pin choice', async () => {
+        mocks.designSystems.pinForRefine.mockResolvedValue({
+          id: 'afterglow',
+          version: 1,
+        });
+
+        await expect(
+          service.appendRefineVersion(
+            fixtures.userId,
+            fixtures.artifactId,
+            'Make it warmer',
+            'afterglow',
+          ),
+        ).resolves.toMatchObject({
+          designSystem: { id: 'afterglow', version: 1 },
+        });
+        expect(mocks.designSystems.pinForRefine).toHaveBeenCalledWith(
+          { id: 'schematic', version: 1 },
+          'afterglow',
+        );
+      });
+
+      it('should append nothing when the pin is unavailable', async () => {
+        mocks.designSystems.pinForRefine.mockRejectedValue(
+          new ConflictException({ code: 'design_system.unavailable' }),
+        );
+
+        await expect(refine()).rejects.toMatchObject({
+          response: { code: 'design_system.unavailable' },
+        });
+        expect(mocks.artifactModel.updateOne).not.toHaveBeenCalled();
+      });
+    });
+
+    it('should reject a designSystemId with a 400 when the artifact is not a DOCUMENT', async () => {
+      mocks.artifactModel.findOne.mockResolvedValue(readyArtifact());
+
+      await expect(
+        service.appendRefineVersion(
+          fixtures.userId,
+          fixtures.artifactId,
+          'Make the hook sharper',
+          'margin',
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
       expect(mocks.artifactModel.updateOne).not.toHaveBeenCalled();
     });
 

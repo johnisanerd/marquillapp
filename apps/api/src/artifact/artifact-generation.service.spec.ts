@@ -362,6 +362,39 @@ describe('ArtifactGenerationService', () => {
         'user123',
         'artifact123',
         'Make the hook sharper',
+        undefined,
+      );
+    });
+
+    it("should carry the Attempt's Design System pin into the run input when refining a DOCUMENT", async () => {
+      mocks.artifactService.appendRefineVersion.mockResolvedValue({
+        version: 2,
+        type: ArtifactType.DOCUMENT,
+        prompt: 'three fixes',
+        withResearch: false,
+        designSystem: { id: 'afterglow', version: 1 },
+      });
+
+      await service.launchRefineRun(
+        'user123',
+        'artifact123',
+        'Make it warmer',
+        'afterglow',
+      );
+
+      expect(mocks.artifactService.appendRefineVersion).toHaveBeenCalledWith(
+        'user123',
+        'artifact123',
+        'Make it warmer',
+        'afterglow',
+      );
+      expect(mocks.workflowRunService.createRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({
+            kind: RunKind.REFINE,
+            designSystem: { id: 'afterglow', version: 1 },
+          }),
+        }),
       );
     });
 

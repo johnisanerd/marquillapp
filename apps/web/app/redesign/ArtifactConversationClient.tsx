@@ -26,6 +26,7 @@ import type {
   ArtifactDetailData,
   ArtifactDetailResponse,
   ArtifactType,
+  RefineArtifactRequest,
   RefineArtifactResponse,
   UpdateArtifactRequest,
 } from "./artifactTypes";
@@ -321,7 +322,9 @@ export default function ArtifactConversationClient({
     try {
       const response = await readApi<RefineArtifactResponse>(
         `${API_BASE}/artifacts/${encodeURIComponent(artifactId)}/refine`,
-        jsonRequest({ feedback: trimmedFeedback }, { method: "POST" }),
+        // A document keeps its Design System; a 409 `design_system.unavailable`
+        // carries a message that is safe to show as the refine error.
+        jsonRequest({ feedback: trimmedFeedback } satisfies RefineArtifactRequest, { method: "POST" }),
       );
       if (!response?.runId || typeof response.version !== "number") {
         throw new Error("The refinement run could not be started.");

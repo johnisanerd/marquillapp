@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -55,7 +56,9 @@ import { ArtifactRunProcessor } from './workers/artifact-run.worker.handler';
  * out; a render Repair that succeeds; render Repairs that run out;
  * truncation of the draft or a Repair; an in-step render retry; a render
  * outage, then a job retry that resumes from the checkpoint; egress; the run
- * deadline; and a stale contract.
+ * deadline; a stale contract; and a refinement that carries its base's pin
+ * and reads its `candidate.html`, switches system, meets a stale contract, or
+ * finds its base's Candidate Source missing.
  * Each asserts step events, `step.progress`, meter records and `failureCode`.
  */
 
@@ -147,12 +150,13 @@ const makeRun = () => {
     research: jest.fn(),
     generateDocument: jest.fn(
       (
-        _input: DocumentGenerateInput,
+        input: DocumentGenerateInput,
         hooks?: AgentHooks,
       ): Promise<DocumentDraftResult> => {
         hooks?.onUsage?.(turn);
+        // As the real agent: a title only when one was asked for.
         return Promise.resolve({
-          title: 'Three fixes',
+          ...(input.includeTitle ? { title: 'Three fixes' } : {}),
           commentary: 'Three fixes, one per page. Swipe through.',
           html: MARGIN_SAMPLE,
           envelopeRepairs: 0,
@@ -187,6 +191,7 @@ const makeRun = () => {
     put: jest
       .fn<Promise<void>, [string, Buffer, string]>()
       .mockResolvedValue(undefined),
+    get: jest.fn<Promise<Buffer | null>, [string]>().mockResolvedValue(null),
   };
   // One run record across job attempts, so a retry reads the checkpoint the
   // failed attempt saved.
@@ -972,5 +977,172 @@ describe('DOCUMENT generation, end to end', () => {
     });
     expect(run.agent.generateDocument).not.toHaveBeenCalled();
     expect(meterRecords(run)).toEqual([]);
+  });
+  describe('a refinement', () => {
+    const BASE_KEY = 'artifacts/artifact-1/1/candidate.html';
+    const sha256 = (body: string) =>
+      createHash('sha256').update(body, 'utf8').digest('hex');
+
+    /** v1 is the Current Version; the job refines it as v2. */
+    const refineJob = (pin = { id: 'margin', version: margin.version }) =>
+      makeJob({
+        data: buildInput({
+          kind: 'REFINE',
+          version: 2,
+          designSystem: pin,
+        } as Partial<BuildInput>),
+      });
+
+    const baseContent = (pin = { id: 'margin', version: margin.version }) => ({
+      commentary: 'The first intro.',
+      document: {
+        designSystemId: pin.id,
+        designSystemVersion: pin.version,
+        sourceKey: 'artifacts/artifact-1/1/source.html',
+        sourceSha256: 'a'.repeat(64),
+        candidateKey: BASE_KEY,
+        candidateSha256: sha256(MARGIN_SAMPLE),
+        pdfKey: 'artifacts/artifact-1/1/document.pdf',
+        pageCount: 5,
+      },
+    });
+
+    beforeEach(() => {
+      run.artifacts.readRefineInput.mockResolvedValue({
+        priorContent: baseContent(),
+        feedback: 'Make page two shorter',
+      });
+      run.objects.get.mockResolvedValue(Buffer.from(MARGIN_SAMPLE, 'utf8'));
+      run.runHandle.getLatestCompletedResearch.mockResolvedValue({
+        findings: 'The first run found this.',
+        sources: [],
+      });
+    });
+
+    it("should carry the base's pin, rewrite its candidate.html, and promote v2 without a title", async () => {
+      await expect(runJob(run, refineJob())).resolves.toBeUndefined();
+
+      expect(lifecycle(run)).toEqual([
+        'run.started',
+        'step.started RESOLVE_INPUT',
+        'step.completed RESOLVE_INPUT',
+        'step.started GENERATE',
+        'step.completed GENERATE',
+        'step.started RENDER_PDF',
+        'step.completed RENDER_PDF',
+        'step.started PERSIST_VERSION',
+        'step.completed PERSIST_VERSION',
+        'run.completed',
+      ]);
+      expect(progress(run)).toEqual([
+        { step: 'GENERATE', phase: 'draft' },
+        { step: 'RENDER_PDF', phase: 'render', session: 1 },
+      ]);
+      expect(run.objects.get).toHaveBeenCalledWith(BASE_KEY);
+      expect(run.designSystems.resolve).toHaveBeenCalledWith(
+        'margin',
+        margin.version,
+      );
+
+      const [[draft]] = run.agent.generateDocument.mock.calls;
+      expect(draft).toMatchObject({
+        includeTitle: false,
+        research: { findings: 'The first run found this.' },
+        refine: {
+          candidate: MARGIN_SAMPLE,
+          commentary: 'The first intro.',
+          feedback: 'Make page two shorter',
+        },
+      });
+      expect(draft.fragment).toContain('margin');
+
+      expect(meterRecords(run)).toEqual(['llm', 'pdf_render']);
+      expect(run.artifacts.promoteVersion).toHaveBeenCalledWith(
+        'artifact-1',
+        2,
+        {
+          commentary: 'Three fixes, one per page. Swipe through.',
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- an asymmetric matcher
+          document: expect.objectContaining({
+            designSystemId: 'margin',
+            designSystemVersion: margin.version,
+            candidateKey: 'artifacts/artifact-1/2/candidate.html',
+          }),
+        },
+        {},
+      );
+    });
+
+    it("should render against the Attempt's own pin when the user switched system", async () => {
+      run.artifacts.readRefineInput.mockResolvedValue({
+        priorContent: baseContent({ id: 'schematic', version: 1 }),
+        feedback: 'Use the margin look',
+      });
+
+      await expect(runJob(run, refineJob())).resolves.toBeUndefined();
+
+      expect(run.designSystems.resolve).toHaveBeenCalledTimes(1);
+      expect(run.designSystems.resolve).toHaveBeenCalledWith(
+        'margin',
+        margin.version,
+      );
+      expect(run.artifacts.promoteVersion).toHaveBeenCalledWith(
+        'artifact-1',
+        2,
+        expect.objectContaining({
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- an asymmetric matcher
+          document: expect.objectContaining({ designSystemId: 'margin' }),
+        }),
+        {},
+      );
+    });
+
+    it('should fail as design_system.unavailable on a stale contract, before reading the base or spending', async () => {
+      run.designSystems.resolve.mockResolvedValue({
+        contract: 2,
+        definition: margin,
+        name: 'Margin',
+      });
+
+      await runJob(run, makeJob({ ...refineJob(), attemptsMade: 3 }));
+
+      expect(failedWith(run)).toMatchObject({
+        code: 'design_system.unavailable',
+      });
+      expect(run.objects.get).not.toHaveBeenCalled();
+      expect(run.agent.generateDocument).not.toHaveBeenCalled();
+      expect(meterRecords(run)).toEqual([]);
+    });
+
+    it("should fail terminally as artifact.source_missing and alert when the base's candidate.html is gone", async () => {
+      run.objects.get.mockResolvedValue(null);
+
+      await runJob(run, refineJob());
+
+      expect(lifecycle(run)).toContain('step.failed RESOLVE_INPUT');
+      expect(failedWith(run)).toMatchObject({
+        code: 'artifact.source_missing',
+      });
+      expect(run.logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('[ALERT artifact.source_missing]'),
+      );
+      expect(run.artifacts.failVersion).toHaveBeenCalledWith(
+        'artifact-1',
+        2,
+        'artifact.source_missing',
+        expect.any(String),
+      );
+      expect(run.agent.generateDocument).not.toHaveBeenCalled();
+      expect(meterRecords(run)).toEqual([]);
+    });
+
+    it('should stay transient while job attempts remain when the R2 read fails', async () => {
+      run.objects.get.mockRejectedValue(new Error('connection reset'));
+
+      const error = await runJob(run, refineJob());
+
+      expect(error).toMatchObject({ retryable: true });
+      expect(run.artifacts.failVersion).not.toHaveBeenCalled();
+    });
   });
 });

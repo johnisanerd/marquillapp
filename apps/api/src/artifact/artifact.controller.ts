@@ -70,6 +70,7 @@ export class ArtifactController {
       user._id.toString(),
       artifactId,
       dto.feedback,
+      dto.designSystemId,
     );
   }
 

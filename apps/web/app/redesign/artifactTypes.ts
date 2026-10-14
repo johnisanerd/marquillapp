@@ -44,6 +44,12 @@ export type CreateArtifactResponse = {
   runId: string;
 };
 
+export type RefineArtifactRequest = {
+  feedback: string;
+  /** DOCUMENT only: switch to this Design System. Omitted, the refine keeps the Current Version's pin. */
+  designSystemId?: string;
+};
+
 export type RefineArtifactResponse = CreateArtifactResponse & {
   version: number;
 };

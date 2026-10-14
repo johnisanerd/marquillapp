@@ -53,6 +53,7 @@ describe('ArtifactController', () => {
       await expect(
         controller.refine(user as any, 'artifact-1', {
           feedback: 'Make the hook sharper',
+          designSystemId: 'afterglow',
         }),
       ).resolves.toEqual({
         artifactId: 'artifact-1',
@@ -64,6 +65,7 @@ describe('ArtifactController', () => {
         'user-1',
         'artifact-1',
         'Make the hook sharper',
+        'afterglow',
       );
     });
   });

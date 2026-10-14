@@ -1,7 +1,9 @@
 import { NotFoundException } from '@nestjs/common';
+import type { DocumentContent } from '../../artifact/schemas';
 import { ArtifactType, RunKind, VersionStatus } from '../../database/schemas';
 import { SUPPORTED_CONTRACT } from '../../design-system/design-system.constants';
 import { renderPromptFragment } from '../../design-system/prompt-fragment';
+import { sha256Hex } from '../../document-source/sha256';
 import { FailureCode } from '../workflow.constants';
 import { terminal, transient } from '../engine/workflow.error';
 import type {
@@ -23,7 +25,8 @@ import type {
  * which `PERSIST_VERSION` absorbs.
  *
  * A DOCUMENT run also loads its pinned Design System (spec §7.4), before any
- * spend. REFINE additionally seeds `refine` and the cached `research`.
+ * spend. REFINE additionally seeds `refine` and the cached `research`, and a
+ * DOCUMENT REFINE the base's verified Candidate Source.
  */
 export const resolveInputStep: StepHandler = async (state, ctx) => {
   const { artifactId, version } = state.input;
@@ -66,14 +69,60 @@ export const resolveInputStep: StepHandler = async (state, ctx) => {
     throw error;
   }
 
+  const baseCandidate =
+    state.input.type === ArtifactType.DOCUMENT
+      ? await readBaseCandidate(
+          state,
+          ctx,
+          refine.priorContent as DocumentContent,
+        )
+      : undefined;
+
   const research = await ctx.run.getLatestCompletedResearch(artifactId);
 
   return {
     ...resolved,
     refine,
     ...(research ? { research } : {}),
+    ...(baseCandidate !== undefined ? { baseCandidate } : {}),
   };
 };
+
+/**
+ * The base's Candidate Source, which the refine prompt sees in place of the
+ * assembled Document Source (spec §6.5, §7.4):
+ *
+ * - an R2 read that fails is **transient**: the object may well be there;
+ * - an object that is missing, or whose bytes no longer match the hash the
+ *   version froze, is **terminal** and alerts: no replay restores it.
+ */
+async function readBaseCandidate(
+  state: RunState,
+  ctx: StepContext,
+  { document }: DocumentContent,
+): Promise<string> {
+  const { artifactId, version } = state.input;
+  const { candidateKey, candidateSha256 } = document;
+
+  let body: Buffer | null;
+  try {
+    body = await ctx.objects.get(candidateKey);
+  } catch (error: unknown) {
+    throw transient(
+      `Reading ${candidateKey} for artifact ${artifactId} v${version} failed`,
+      error,
+    );
+  }
+
+  if (body === null || sha256Hex(body) !== candidateSha256) {
+    const problem =
+      body === null ? 'is missing' : 'does not match its candidateSha256';
+    const reason = `The base Candidate Source ${candidateKey} of artifact ${artifactId} v${version} ${problem}`;
+    ctx.logger.error(`[ALERT artifact.source_missing] ${reason}`);
+    throw terminal(reason, undefined, FailureCode.ARTIFACT_SOURCE_MISSING);
+  }
+  return body.toString('utf8');
+}
 
 /**
  * Loads the Attempt's pinned definition with the status-blind `resolve`, plus

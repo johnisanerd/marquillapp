@@ -1,6 +1,9 @@
 import { ArtifactType } from 'src/database/schemas';
 import type { BoundedViolations } from '../../document-source/violation';
-import type { GenerateInput } from '../agent-runner.interface';
+import type {
+  DocumentGenerateInput,
+  GenerateInput,
+} from '../agent-runner.interface';
 import { resolveStylePresetInstruction } from '../style-presets.config';
 
 // `generate` is a single structured completion, so the system prompt carries the
@@ -198,6 +201,33 @@ export function buildGenerationUserPrompt(input: GenerateInput): string {
   }
 
   return sections.join('\n\n');
+}
+
+/**
+ * A DOCUMENT draft's user message: the brief, plus, on a refinement, the
+ * base's Candidate Source, its commentary and the feedback (spec §6.5). The
+ * model re-emits the whole document, so it sees the whole base.
+ */
+export function buildDocumentGenerationUserPrompt(
+  input: DocumentGenerateInput,
+): string {
+  const brief = buildGenerationUserPrompt({
+    type: ArtifactType.DOCUMENT,
+    prompt: input.prompt,
+    stylePreset: input.stylePreset,
+    research: input.research,
+  });
+  if (!input.refine) return brief;
+
+  const { candidate, commentary, feedback } = input.refine;
+  return [
+    brief,
+    `PREVIOUS DOCUMENT:\n${candidate}`,
+    ...(commentary !== undefined
+      ? [`PREVIOUS COMMENTARY:\n${commentary}`]
+      : []),
+    `REFINEMENT FEEDBACK:\n${feedback}\n\nRewrite the document and its commentary to address the feedback, and re-emit the complete document as "html". Keep what the feedback does not ask you to change.`,
+  ].join('\n\n');
 }
 
 /**
