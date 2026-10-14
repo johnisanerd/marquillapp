@@ -30,9 +30,10 @@ export function formatEvalReport(result: EvalResult): string {
   );
   lines.push(
     ...table(
-      ['run', 'state', 'run id', 'note'],
+      ['run', 'pages', 'state', 'run id', 'note'],
       result.records.map((record) => [
         record.key,
+        record.requestedPages > 0 ? String(record.requestedPages) : '-',
         record.state,
         record.runId ?? '-',
         record.error ??

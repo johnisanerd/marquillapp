@@ -16,12 +16,13 @@ then polls the run records until every run ends:
 
 | Runs | What |
 |---|---|
-| 18 INITIAL | the 6 listed launch Design Systems (read live from `DesignSystemsService.listActive()`) × a 4-, 8- and 15-page brief |
+| 18 INITIAL | the 6 listed launch Design Systems (read live from `DesignSystemsService.listActive()`) × a 4-, 8- and up to 15-page brief (the long brief requests `min(15, pages.max)` per system, so 12 pages for afterglow, broadside, colophon, and overprint, and 15 for margin and schematic) |
 | 1 REFINE (carry) | a Refinement of the first `READY` initial run, with no `designSystemId`: it keeps the pin |
 | 1 REFINE (switch) | a Refinement of the second `READY` initial run, switching to the first listed system that is not its own |
 
-The briefs are fixtures in `src/scripts/eval-documents/briefs.ts`. Every system gets the same three, so a
-failure is comparable across systems. Research is off for every run.
+The briefs are fixtures in `src/scripts/eval-documents/briefs.ts`. Every system gets the same three (with
+the long brief requesting each system's page cap), so a failure is comparable across systems. Research is off
+for every run.
 
 A run's status can end a moment before the worker saves its diagnostics, so after the last run ends the
 script waits up to 2 minutes for every ended run's diagnostics. A run with none after that counts as failing.

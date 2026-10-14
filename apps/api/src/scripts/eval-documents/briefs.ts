@@ -5,6 +5,68 @@ export interface EvalBrief {
   prompt: string;
 }
 
+const NUMBER_WORDS: Record<number, string> = {
+  1: 'one',
+  2: 'two',
+  3: 'three',
+  4: 'four',
+  5: 'five',
+  6: 'six',
+  7: 'seven',
+  8: 'eight',
+  9: 'nine',
+  10: 'ten',
+};
+
+const LAUNCH_STEPS = [
+  'define the one outcome',
+  'name the audience',
+  'write the one-sentence pitch',
+  'pick the launch date',
+  'brief sales and support',
+  'prepare the announcement',
+  'run a dry rehearsal',
+  'launch',
+  'watch the first 48 hours',
+  'hold a retrospective',
+];
+
+/**
+ * Builds the prompt for the long brief (field guide to product launch).
+ * When pages is 15, produces the exact canonical prompt text.
+ * When pages is capped (e.g. 12), scales the covered steps and target page count.
+ */
+export function buildLongBriefPrompt(pages: number): string {
+  const stepCount = Math.max(1, Math.min(LAUNCH_STEPS.length, pages - 5));
+  const stepEndPage = 3 + stepCount;
+  const countWord = NUMBER_WORDS[stepCount] ?? String(stepCount);
+  const stepsText = LAUNCH_STEPS.slice(0, stepCount).join(', ');
+
+  return [
+    `A ${pages}-page LinkedIn document: "A field guide to running your first product launch".`,
+    'Audience: first-time product managers at small companies.',
+    'Page 1 is the cover. Page 2 explains why launches fail quietly. Page 3 is a contents page.',
+    `Pages 4 to ${stepEndPage} cover ${countWord} steps in order: ${stepsText}. Give each step one page with a short rule of thumb.`,
+    `Page ${pages - 1} summarises the ${countWord} steps in a compact checklist.`,
+    `Page ${pages} invites readers to share the step they found hardest.`,
+    `Make it exactly ${pages} pages. One idea per page, little text.`,
+  ].join(' ');
+}
+
+export function buildBriefPrompt(
+  targetPages: number,
+  actualPages: number,
+  basePrompt: string,
+): string {
+  if (actualPages === targetPages) return basePrompt;
+  return basePrompt
+    .replace(new RegExp(`A ${targetPages}-page`, 'g'), `A ${actualPages}-page`)
+    .replace(
+      new RegExp(`exactly ${targetPages} pages`, 'g'),
+      `exactly ${actualPages} pages`,
+    );
+}
+
 /**
  * The three briefs of the pre-rollout eval (spec §11.3): a short, a mid-length
  * and a long LinkedIn document, each on a different topic. They are fixtures:
@@ -36,17 +98,37 @@ export const EVAL_BRIEFS: readonly EvalBrief[] = [
   },
   {
     pages: 15,
-    prompt: [
-      'A 15-page LinkedIn document: "A field guide to running your first product launch".',
-      'Audience: first-time product managers at small companies.',
-      'Page 1 is the cover. Page 2 explains why launches fail quietly. Page 3 is a contents page.',
-      'Pages 4 to 13 cover ten steps in order: define the one outcome, name the audience, write the one-sentence pitch, pick the launch date, brief sales and support, prepare the announcement, run a dry rehearsal, launch, watch the first 48 hours, hold a retrospective. Give each step one page with a short rule of thumb.',
-      'Page 14 summarises the ten steps in a compact checklist.',
-      'Page 15 invites readers to share the step they found hardest.',
-      'Make it exactly 15 pages. One idea per page, little text.',
-    ].join(' '),
+    prompt: buildLongBriefPrompt(15),
   },
 ];
+
+/**
+ * Adapts briefs to a Design System's page bounds: clamps the long brief to
+ * min(15, pages.max), and clamps any brief below pages.min or above pages.max.
+ */
+export function briefsForSystem(pageLimits?: {
+  min: number;
+  max: number;
+}): EvalBrief[] {
+  const min = pageLimits?.min ?? 1;
+  const max = pageLimits?.max ?? 15;
+  return EVAL_BRIEFS.map((brief) => {
+    const clampedPages = Math.max(min, Math.min(brief.pages, max));
+    if (clampedPages === brief.pages) {
+      return brief;
+    }
+    if (brief.pages === 15) {
+      return {
+        pages: clampedPages,
+        prompt: buildLongBriefPrompt(clampedPages),
+      };
+    }
+    return {
+      pages: clampedPages,
+      prompt: buildBriefPrompt(brief.pages, clampedPages, brief.prompt),
+    };
+  });
+}
 
 /** What a REFINE run asks for. Both refines of the matrix use it. */
 export const EVAL_REFINE_FEEDBACK =

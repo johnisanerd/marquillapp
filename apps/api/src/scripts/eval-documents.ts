@@ -5,16 +5,17 @@
  *   bun run eval:documents [--concurrency 2] [--timeout-min 120] [--json out.json]
  *   bun run eval:documents --cleanup
  *
- * It launches the 20-run matrix (6 Design Systems x a 4-, 8- and 15-page
- * brief, plus a Refinement that carries the pin and one that switches system)
- * through the same service path as `POST /artifacts` and `.../refine`, then
- * waits for the worker to run them. The worker is a separate process
- * (`bun run start:worker`) and must run against the same MongoDB and Redis:
- * this script only enqueues, then reads the run records back, so the model and
- * Browserless calls are the worker's real ones and its diagnostics are the
- * normal `documentDiagnostics`. It prints the §11.5 aggregates, each §11.3
- * gate with PASS or FAIL, and a cover review table, and exits non-zero when
- * an automatic gate fails. See docs/document-eval-runbook.md.
+ * It launches the 20-run matrix (6 Design Systems x a 4-, 8- and up to 15-page
+ * brief, capped at min(15, pages.max) per system, plus a Refinement that carries
+ * the pin and one that switches system) through the same service path as
+ * `POST /artifacts` and `.../refine`, then waits for the worker to run them.
+ * The worker is a separate process (`bun run start:worker`) and must run
+ * against the same MongoDB and Redis: this script only enqueues, then reads the
+ * run records back, so the model and Browserless calls are the worker's real
+ * ones and its diagnostics are the normal `documentDiagnostics`. It prints the
+ * §11.5 aggregates, each §11.3 gate with PASS or FAIL, and a cover review
+ * table, and exits non-zero when an automatic gate fails. See
+ * docs/document-eval-runbook.md.
  *
  * The runs belong to a dedicated Mongo-only user (`eval@marquill.internal`,
  * no `clerkId`, nothing in Clerk). It gets an active Subscription row (no

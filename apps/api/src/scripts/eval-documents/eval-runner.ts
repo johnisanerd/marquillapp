@@ -6,6 +6,7 @@ import type { DocumentMetricsQuery } from '../../diagnostics/document-metrics.se
 import {
   buildEvalMatrix,
   switchTarget,
+  type EvalMatrixTarget,
   type RefineEvalEntry,
 } from './eval-matrix';
 import { evaluateEval, type EvalEvaluation } from './eval-gates';
@@ -44,7 +45,16 @@ export interface EvalGeneration {
  * the real services; tests pass fakes.
  */
 export interface EvalDeps {
-  designSystems: { listActive(): { id: string }[] };
+  designSystems: {
+    listActive(): { id: string }[];
+    getActive?(id: string): {
+      definition: {
+        page: {
+          pages: { min: number; max: number };
+        };
+      };
+    };
+  };
   defaultDesignSystemId: string;
   /** The Mongo-only eval user whose runs these are. */
   account: { userId: string; resetCredits(): Promise<void> };
@@ -110,12 +120,16 @@ export async function runDocumentEval(
   const designSystemIds = deps.designSystems.listActive().map(({ id }) => id);
   assertLaunchSet(designSystemIds, deps.defaultDesignSystemId);
 
-  const matrix = buildEvalMatrix(designSystemIds);
+  const targets: EvalMatrixTarget[] = designSystemIds.map((id) => {
+    const record = deps.designSystems.getActive?.(id);
+    return record ? { id, definition: record.definition } : id;
+  });
+  const matrix = buildEvalMatrix(targets);
   const records: EvalRunRecord[] = matrix.initial.map((entry) => ({
     key: entry.key,
     kind: 'INITIAL',
     requestedDesignSystemId: entry.designSystemId,
-    requestedPages: entry.pages,
+    requestedPages: entry.requestedPages,
     state: 'NOT_RUN',
   }));
 
@@ -133,8 +147,10 @@ export async function runDocumentEval(
   // Only a READY run can be refined, and an artifact takes one Attempt at a
   // time, so the two Refinements start from the first two distinct READY runs.
   const ready = records.filter((record) => record.state === 'COMPLETED');
+  const getLimits = (id: string) =>
+    deps.designSystems.getActive?.(id)?.definition?.page?.pages;
   const refinements = matrix.refine.map((entry, index) =>
-    refineRecord(entry, ready[index], designSystemIds),
+    refineRecord(entry, ready[index], designSystemIds, getLimits),
   );
   records.push(...refinements.map(({ record }) => record));
   await runPool(refinements, options.concurrency, async (refinement) => {
@@ -228,16 +244,25 @@ function refineRecord(
   entry: RefineEvalEntry,
   source: EvalRunRecord | undefined,
   designSystemIds: string[],
+  getLimits?: (id: string) => { min: number; max: number } | undefined,
 ): RefineLaunch {
   const designSystemId =
     entry.mode === 'switch' && source?.requestedDesignSystemId
       ? switchTarget(designSystemIds, source.requestedDesignSystemId)
       : undefined;
+  const targetSystemId = designSystemId ?? source?.requestedDesignSystemId;
+  const rawPages = source?.requestedPages ?? 0;
+  const limits =
+    targetSystemId && getLimits ? getLimits(targetSystemId) : undefined;
+  const requestedPages = limits
+    ? Math.max(limits.min, Math.min(rawPages, limits.max))
+    : rawPages;
+
   const record: EvalRunRecord = {
     key: entry.key,
     kind: 'REFINE',
     requestedDesignSystemId: designSystemId,
-    requestedPages: source?.requestedPages ?? 0,
+    requestedPages,
     sourceKey: source?.key,
     state: 'NOT_RUN',
     ...(source ? {} : { error: 'no READY run left to refine' }),

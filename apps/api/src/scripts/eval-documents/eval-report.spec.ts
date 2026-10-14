@@ -98,11 +98,11 @@ describe('formatEvalReport', () => {
   it('should print every gate with PASS or FAIL', () => {
     const report = formatEvalReport(makeResult());
 
-    expect(report).toMatch(/PASS\s+Runs failing ≤ 1/);
+    expect(report).toMatch(/PASS\s+Runs failing \u2264 1/);
     expect(report).toMatch(/PASS\s+document\.truncated = 0/);
     expect(report).toMatch(/PASS\s+render\.egress = 0/);
-    expect(report).toMatch(/PASS\s+Slowest run ≤ 4m00s/);
-    expect(report).toMatch(/PASS\s+Costliest successful run ≤ 3×/);
+    expect(report).toMatch(/PASS\s+Slowest run \u2264 4m00s/);
+    expect(report).toMatch(/PASS\s+Costliest successful run \u2264 3\u00d7/);
   });
 
   it('should mark a failing gate FAIL and the eval failed', () => {
@@ -110,7 +110,7 @@ describe('formatEvalReport', () => {
 
     const report = formatEvalReport(failing);
 
-    expect(report).toMatch(/FAIL\s+Runs failing ≤ 1/);
+    expect(report).toMatch(/FAIL\s+Runs failing \u2264 1/);
     expect(report).toMatch(/FAIL\s+Default design system \(margin\)/);
     expect(report).toContain('RESULT: FAIL');
   });
@@ -240,5 +240,13 @@ describe('formatEvalReport', () => {
     expect(report).toContain('refine/switch-system');
     expect(report).toContain('NOT_RUN');
     expect(report).toContain('no READY run left to refine');
+  });
+
+  it('should print the requested page count in the runs table', () => {
+    const report = formatEvalReport(makeResult());
+
+    expect(report).toMatch(/run\s+pages\s+state\s+run id\s+note/);
+    expect(report).toMatch(/margin\/4p\s+4\s+COMPLETED/);
+    expect(report).toMatch(/margin\/8p\s+8\s+COMPLETED/);
   });
 });
