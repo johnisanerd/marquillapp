@@ -51,9 +51,21 @@ const makeStep = () => {
     research: jest.fn(),
   };
   const meter = { record: jest.fn() };
-  const run = { recordDocumentCheck: jest.fn().mockResolvedValue(undefined) };
+  const run = {
+    recordDocumentCheck: jest.fn().mockResolvedValue(undefined),
+    readAcceptedCandidate: jest.fn().mockResolvedValue(undefined),
+  };
   const emit = jest.fn();
-  const ctx = { agent, meter, run, emit } as unknown as StepContext;
+  const deadline = { assertTimeLeft: jest.fn() };
+  const logger = { log: jest.fn() };
+  const ctx = {
+    agent,
+    meter,
+    run,
+    emit,
+    deadline,
+    logger,
+  } as unknown as StepContext;
 
   const state = {
     input: {
@@ -81,7 +93,7 @@ const makeStep = () => {
 
   return {
     ctx,
-    mocks: { agent, meter, run, emit },
+    mocks: { agent, meter, run, emit, deadline },
     fixtures: { state, documentState, definition },
   };
 };
@@ -257,6 +269,85 @@ describe('generateStep', () => {
         violations: [finding],
       });
       expect(check.checkedAt).toBeInstanceOf(Date);
+    });
+
+    describe('checkpoint replay', () => {
+      const accepted = {
+        commentary: 'Swipe through.',
+        candidate: REPAIRED,
+        repairsSpent: 1,
+        title: 'Three fixes',
+        savedAt: new Date('2026-10-02T00:00:00.000Z'),
+      };
+
+      beforeEach(() => {
+        mocks.run.readAcceptedCandidate.mockResolvedValue(accepted);
+      });
+
+      it('should return the accepted candidate without calling the model', async () => {
+        await expect(
+          generateStep(fixtures.documentState, ctx),
+        ).resolves.toEqual({
+          generatedTitle: 'Three fixes',
+          draft: {
+            commentary: 'Swipe through.',
+            candidate: REPAIRED,
+            repairsSpent: 1,
+          },
+        });
+        expect(mocks.agent.generateDocument).not.toHaveBeenCalled();
+        expect(mocks.agent.repairDocument).not.toHaveBeenCalled();
+      });
+
+      it('should bill nothing, check nothing, and announce no draft', async () => {
+        await generateStep(fixtures.documentState, ctx);
+
+        expect(mocks.meter.record).not.toHaveBeenCalled();
+        expect(mockedCheck).not.toHaveBeenCalled();
+        expect(mocks.emit).not.toHaveBeenCalled();
+      });
+
+      it('should carry no title when the checkpoint has none', async () => {
+        mocks.run.readAcceptedCandidate.mockResolvedValue({
+          ...accepted,
+          title: undefined,
+        });
+
+        const patch = await generateStep(fixtures.documentState, ctx);
+
+        expect(patch).not.toHaveProperty('generatedTitle');
+      });
+    });
+
+    describe('the run deadline', () => {
+      it('should check it before the draft and each Repair', async () => {
+        mockedCheck.mockReturnValueOnce([finding]);
+
+        await generateStep(fixtures.documentState, ctx);
+
+        expect(
+          mocks.deadline.assertTimeLeft.mock.calls.map(
+            ([step, before]: [string, string]) => `${step}: ${before}`,
+          ),
+        ).toEqual([
+          'GENERATE: the draft of artifact artifact-1 v1',
+          'GENERATE: Repair round 1 of artifact artifact-1 v1',
+        ]);
+      });
+
+      it('should call no model once it has passed', async () => {
+        const passed = new WorkflowError('past the deadline', {
+          retryable: true,
+        });
+        mocks.deadline.assertTimeLeft.mockImplementation(() => {
+          throw passed;
+        });
+
+        await expect(generateStep(fixtures.documentState, ctx)).rejects.toBe(
+          passed,
+        );
+        expect(mocks.agent.generateDocument).not.toHaveBeenCalled();
+      });
     });
 
     describe('static Repair', () => {

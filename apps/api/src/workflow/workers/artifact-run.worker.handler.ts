@@ -6,8 +6,12 @@ import type { CreditMeterService } from '../../feature-gating/credit-meter.servi
 import type { FeatureGatingService } from '../../feature-gating/feature-gating.service';
 import { FeatureGateForbiddenException } from '../../feature-gating/feature-gating.exception';
 import { RunKind } from '../../database/schemas';
-import { FAILURE_REASONS } from '../workflow.constants';
+import {
+  DOCUMENT_RUN_DEADLINE_MS,
+  FAILURE_REASONS,
+} from '../workflow.constants';
 import { RunCreditMeter } from '../engine/run-credit-meter';
+import { RunDeadline } from '../engine/run-deadline';
 import {
   RunEventEmitter,
   type RunEventRedis,
@@ -103,6 +107,8 @@ export class ArtifactRunProcessor {
       renderer: this.deps.renderer,
       objects: this.deps.objects,
       meter: new RunCreditMeter(creditMeter, job.data.userId, emit, logger),
+      // Per job attempt: a retry gets a fresh budget.
+      deadline: RunDeadline.after(DOCUMENT_RUN_DEADLINE_MS),
       emit,
       run: runs.handleFor(runId),
     };

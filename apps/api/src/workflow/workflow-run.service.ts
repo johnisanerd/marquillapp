@@ -5,6 +5,7 @@ import { RunKind, RunStatus, WorkflowRun } from '../database/schemas';
 import type { ResearchResult } from '../agent/agent-runner.interface';
 import type { RenderAttemptUsage } from '../document-render/render-usage.types';
 import type {
+  AcceptedCandidate,
   BuildInput,
   DocumentCheck,
   RunRecordHandle,
@@ -125,6 +126,9 @@ export class WorkflowRunService {
         this.appendRenderAttempt(runId, usage),
       recordDocumentCheck: (check: DocumentCheck) =>
         this.appendDocumentCheck(runId, check),
+      saveAcceptedCandidate: (accepted: AcceptedCandidate) =>
+        this.patch(runId, { acceptedCandidate: accepted }),
+      readAcceptedCandidate: () => this.readAcceptedCandidate(runId),
       getLatestCompletedResearch: (artifactId: string) =>
         this.getLatestCompletedResearch(artifactId),
       complete: (creditsUsed: number) =>
@@ -146,6 +150,17 @@ export class WorkflowRunService {
       { _id: new Types.ObjectId(runId) },
       { $set: fields },
     );
+  }
+
+  private async readAcceptedCandidate(
+    runId: string,
+  ): Promise<AcceptedCandidate | undefined> {
+    const run = await this.workflowRunModel
+      .findById(runId)
+      .select({ acceptedCandidate: 1 })
+      .lean<{ acceptedCandidate?: AcceptedCandidate }>()
+      .exec();
+    return run?.acceptedCandidate ?? undefined;
   }
 
   private async appendRenderAttempt(

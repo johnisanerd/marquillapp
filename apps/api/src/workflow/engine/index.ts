@@ -1,4 +1,5 @@
 export * from './run-credit-meter';
+export * from './run-deadline';
 export * from './run-event.emitter';
 export * from './run-event.types';
 export * from './workflow.builder';

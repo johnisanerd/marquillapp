@@ -1,18 +1,40 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import type { DocumentVersion } from '../../artifact/schemas';
+import { RunKind } from '../../database/schemas';
+import type { DesignSystemDefinition } from '../../design-system/design-system-definition';
 import { judge } from '../../document-render/judge';
 import { remedyOf } from '../../document-render/render-remedy';
 import { RenderSessionError } from '../../document-render/render-session.error';
 import type { RenderSessionResult } from '../../document-render/render-session';
-import type { RenderSessionOutcome } from '../../document-render/render-usage.types';
+import type {
+  BrowserlessUsage,
+  RenderSessionOutcome,
+} from '../../document-render/render-usage.types';
 import { assemble } from '../../document-source/assemble';
 import { IconInliningError } from '../../document-source/icon-inlining.error';
 import type { Violation } from '../../document-source/violation';
 import { USAGE_KINDS } from '../../feature-gating/credit-meter.constants';
 import { RunEventType } from '../engine/run-event.types';
 import { terminal, transient } from '../engine/workflow.error';
-import type { StepHandler } from '../engine/workflow.types';
-import { FailureCode, WorkflowStep } from '../workflow.constants';
+import type {
+  DesignSystemPin,
+  DocumentDraftState,
+  RunState,
+  StepContext,
+  StepHandler,
+} from '../engine/workflow.types';
+import {
+  FailureCode,
+  RENDER_RETRY_DELAY_MS,
+  WorkflowStep,
+} from '../workflow.constants';
 import { sha256Hex } from '../../document-source/sha256';
+import {
+  repair,
+  repairStatically,
+  type RepairedCandidate,
+  type RepairScope,
+} from './document-repair';
 
 const HTML_MIME_TYPE = 'text/html; charset=utf-8';
 const PDF_MIME_TYPE = 'application/pdf';
@@ -37,25 +59,37 @@ export const documentObjectKey = (
 
 /**
  * DOCUMENT-only (spec §7.1): assemble the statically clean Candidate Source
- * into a Document Source, render it in one CDP session, judge what the
- * session measured, and, on a pass, upload the four objects. Puts the keys,
- * hashes and measured `pageCount` in run state for `PERSIST_VERSION`.
+ * into a Document Source, render it in one CDP session, and judge what the
+ * session measured. On `repair` findings it spends a render Repair from the
+ * budget `GENERATE` shares, statically re-checks (and, if need be, repairs)
+ * the re-emitted Candidate Source, and renders again. On a pass it uploads
+ * the four objects and puts the keys, hashes and measured `pageCount` in run
+ * state for `PERSIST_VERSION`.
  *
  * Every session is recorded on the run. Only a session with a verdict is
- * billed, as one `pdf_render` record when the step completes (spec §7.7).
+ * billed, as one `pdf_render` record over all of them when the step completes
+ * (spec §7.7).
  *
- * There is no Repair yet (#168). How a judged session ends the step:
+ * Before it renders a Document Source, the step saves its Candidate Source
+ * to the run as the `acceptedCandidate` checkpoint (spec §7.3).
+ *
+ * How a judged session ends the step:
  *
  * - `render.egress` is a checker defect: **terminal**, and alerted.
- * - a `retry` finding (`render.timeout`, `render.fonts.failed`) is
- *   **transient**: the job's own retry renders again.
- * - any `repair` finding is **terminal** as `document.repair_exhausted`.
+ * - a `retry` finding (`render.timeout`, `render.fonts.failed`) renders the
+ *   same Document Source once more after a pause, spending no Repair. If
+ *   that fails too, it is **transient**: the job's own retry resumes from the
+ *   checkpoint.
+ * - `repair` findings with the budget spent are **terminal** as
+ *   `document.repair_exhausted`.
+ *
+ * `DOCUMENT_RUN_DEADLINE_MS` is checked before every session and Repair.
  *
  * A session that fails outright is transient, `render.unavailable` if it ends
  * the run. A failed cover capture is recorded and never blocks the version.
  */
 export const renderPdfStep: StepHandler = async (state, ctx) => {
-  const { artifactId, version } = state.input;
+  const { artifactId, version, kind } = state.input;
   const { designSystem, draft } = state;
   const pin = state.input.designSystem;
   if (!designSystem || !draft || !pin) {
@@ -65,26 +99,169 @@ export const renderPdfStep: StepHandler = async (state, ctx) => {
       `RENDER_PDF reached without a Design System and a Candidate Source for artifact ${artifactId} v${version}`,
     );
   }
-  const { definition } = designSystem;
+  const { definition, fragment } = designSystem;
+  const label = `artifact ${artifactId} v${version}`;
+  const scope: RepairScope = {
+    ctx,
+    step: WorkflowStep.RENDER_PDF,
+    definition,
+    fragment,
+    includeTitle: kind === RunKind.INITIAL,
+    label,
+  };
 
-  let documentSource: string;
+  let current: RepairedCandidate = {
+    candidate: draft.candidate,
+    repairsSpent: draft.repairsSpent,
+  };
+  // Sessions that produced a verdict, all billed as one record on a pass.
+  const verdicts: BrowserlessUsage[] = [];
+  let sessions = 0;
+
+  /**
+   * Renders and judges one Document Source until a session gives a verdict.
+   * A `retry` finding renders it once more after a pause, spending no Repair.
+   */
+  const renderJudged = async (
+    documentSource: string,
+    candidate: string,
+  ): Promise<JudgedSession> => {
+    let retried = false;
+    for (;;) {
+      sessions += 1;
+      ctx.deadline.assertTimeLeft(
+        WorkflowStep.RENDER_PDF,
+        `render session ${sessions} of ${label}`,
+      );
+      ctx.emit({
+        type: RunEventType.STEP_PROGRESS,
+        data: {
+          step: WorkflowStep.RENDER_PDF,
+          phase: 'render',
+          session: sessions,
+        },
+      });
+
+      const session = await renderSession(ctx, definition, documentSource);
+      const violations = judge(definition, session.facts);
+      await ctx.run.recordDocumentCheck({
+        phase: 'render',
+        candidateSha256: sha256Hex(candidate),
+        violations,
+        checkedAt: new Date(),
+      });
+
+      const outcome = outcomeOf(violations);
+      if (outcome === 'PASSED') return { session, violations, outcome };
+
+      await ctx.run.recordRenderAttempt({
+        ...session.usage,
+        outcome,
+        billed: outcome === 'FINDINGS',
+      });
+
+      if (outcome === 'EGRESS') {
+        ctx.logger.error(
+          `[ALERT render.egress] ${label}: the render session refused ${session.refusedRequests.length} request(s) the static check let through`,
+        );
+        throw terminal(
+          `The Document Source for ${label} requested a refused URL`,
+        );
+      }
+      if (outcome === 'FINDINGS') return { session, violations, outcome };
+
+      if (retried) {
+        throw transient(
+          `The render of ${label} did not settle after an in-step retry (${codesOf(violations)})`,
+          undefined,
+          FailureCode.RENDER_UNAVAILABLE,
+        );
+      }
+      retried = true;
+      ctx.emit({
+        type: RunEventType.STEP_PROGRESS,
+        data: {
+          step: WorkflowStep.RENDER_PDF,
+          phase: 'retry',
+          cause: violations.some(({ code }) => code === 'render.timeout')
+            ? 'timeout'
+            : 'fonts',
+        },
+      });
+      await sleep(RENDER_RETRY_DELAY_MS);
+    }
+  };
+
+  for (;;) {
+    const documentSource = assembleSource(definition, current.candidate);
+
+    // The checkpoint: a job retry after a render outage resumes from here
+    // without calling the model (spec §7.3).
+    await ctx.run.saveAcceptedCandidate({
+      ...current,
+      commentary: draft.commentary,
+      ...(state.generatedTitle !== undefined
+        ? { title: state.generatedTitle }
+        : {}),
+      savedAt: new Date(),
+    });
+
+    const { session, violations, outcome } = await renderJudged(
+      documentSource,
+      current.candidate,
+    );
+    if (outcome === 'PASSED') {
+      return publish(ctx, {
+        state,
+        pin,
+        draft: { ...draft, ...current },
+        documentSource,
+        session,
+        verdicts: [...verdicts, session.usage],
+      });
+    }
+
+    verdicts.push(session.usage);
+    // Only `repair` findings reach the model (spec §7.2); a FINDINGS outcome
+    // has no others, but the filter keeps that a guarantee.
+    const findings = violations.filter(
+      ({ code }) => remedyOf(code) === 'repair',
+    );
+    const repaired = await repair(scope, current, findings, 'render');
+    // A candidate reaches Browserless only once it is statically clean.
+    current = await repairStatically(scope, repaired);
+  }
+};
+
+/** A session that gave a verdict: a pass, or `repair` findings. */
+interface JudgedSession {
+  session: RenderSessionResult;
+  violations: Violation[];
+  outcome: 'PASSED' | 'FINDINGS';
+}
+
+function assembleSource(
+  definition: DesignSystemDefinition,
+  candidate: string,
+): string {
   try {
-    documentSource = assemble(definition, draft.candidate);
+    return assemble(definition, candidate);
   } catch (error: unknown) {
     if (error instanceof IconInliningError) {
       throw terminal(error.message, error);
     }
     throw error;
   }
+}
 
-  ctx.emit({
-    type: RunEventType.STEP_PROGRESS,
-    data: { step: WorkflowStep.RENDER_PDF, phase: 'render', session: 1 },
-  });
-
-  let session: RenderSessionResult;
+/** One render session. A session that fails outright is recorded, unbilled. */
+async function renderSession(
+  ctx: StepContext,
+  definition: DesignSystemDefinition,
+  documentSource: string,
+): Promise<RenderSessionResult> {
   try {
-    session = await ctx.renderer.render(definition, documentSource);
+    return await ctx.renderer.render(definition, documentSource);
   } catch (error: unknown) {
     if (error instanceof RenderSessionError) {
       await ctx.run.recordRenderAttempt({
@@ -100,49 +277,36 @@ export const renderPdfStep: StepHandler = async (state, ctx) => {
       FailureCode.RENDER_UNAVAILABLE,
     );
   }
+}
 
-  const violations = judge(definition, session.facts);
-  await ctx.run.recordDocumentCheck({
-    phase: 'render',
-    candidateSha256: sha256Hex(draft.candidate),
-    violations,
-    checkedAt: new Date(),
-  });
+interface Publication {
+  state: RunState;
+  pin: DesignSystemPin;
+  /** The Candidate Source that passed, with the Repairs spent reaching it. */
+  draft: DocumentDraftState;
+  documentSource: string;
+  /** The session that passed. */
+  session: RenderSessionResult;
+  /** Every session with a verdict, the passing one included. */
+  verdicts: BrowserlessUsage[];
+}
 
-  const outcome = outcomeOf(violations);
+/**
+ * Uploads a passing render's objects, records its session, and bills every
+ * session with a verdict as one `pdf_render` record.
+ */
+async function publish(
+  ctx: StepContext,
+  { state, pin, draft, documentSource, session, verdicts }: Publication,
+): Promise<Partial<RunState>> {
+  const { artifactId, version } = state.input;
   const recordSession = (coverFailure?: string) =>
     ctx.run.recordRenderAttempt({
       ...session.usage,
-      outcome,
-      billed: outcome === 'PASSED' || outcome === 'FINDINGS',
+      outcome: 'PASSED',
+      billed: true,
       ...(coverFailure !== undefined ? { coverFailure } : {}),
     });
-
-  if (outcome === 'EGRESS') {
-    await recordSession();
-    ctx.logger.error(
-      `[ALERT render.egress] artifact ${artifactId} v${version}: the render session refused ${session.refusedRequests.length} request(s) the static check let through`,
-    );
-    throw terminal(
-      `The Document Source for artifact ${artifactId} v${version} requested a refused URL`,
-    );
-  }
-  if (outcome === 'RETRY') {
-    await recordSession();
-    throw transient(
-      `The render of artifact ${artifactId} v${version} did not settle (${codesOf(violations)})`,
-      undefined,
-      FailureCode.RENDER_UNAVAILABLE,
-    );
-  }
-  if (outcome === 'FINDINGS') {
-    await recordSession();
-    throw terminal(
-      `The render of artifact ${artifactId} v${version} has ${violations.length} finding(s), and there is no Repair`,
-      undefined,
-      FailureCode.DOCUMENT_REPAIR_EXHAUSTED,
-    );
-  }
 
   const { pdf, pageCount } = session;
   if (!pdf || pageCount === null) {
@@ -198,12 +362,19 @@ export const renderPdfStep: StepHandler = async (state, ctx) => {
 
   await recordSession(coverFailure);
 
-  // One record per run, over every session with a verdict. With no Repair
-  // there is exactly one such session: this one.
+  // One record per run over every session with a verdict, so the meter's
+  // `max(minimum, surcharge × units)` applies the minimum once (spec §7.7).
+  const billed = verdicts.reduce(
+    (total, usage) => ({
+      durationMs: total.durationMs + usage.durationMs,
+      units: total.units + usage.units,
+    }),
+    { durationMs: 0, units: 0 },
+  );
   ctx.meter.record({
     kind: USAGE_KINDS.PDF_RENDER,
-    amount: session.usage.units,
-    detail: { browserless: session.usage },
+    amount: billed.units,
+    detail: { browserless: billed },
   });
 
   const document: DocumentVersion = {
@@ -217,8 +388,8 @@ export const renderPdfStep: StepHandler = async (state, ctx) => {
     pageCount,
     ...(coverKey !== undefined ? { coverKey } : {}),
   };
-  return { document };
-};
+  return { draft, document };
+}
 
 /** How a judged session ended, by the strongest remedy among its findings. */
 function outcomeOf(violations: Violation[]): RenderSessionOutcome {

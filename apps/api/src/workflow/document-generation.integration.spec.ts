@@ -19,6 +19,11 @@ jest.mock(
   { virtual: true },
 );
 
+// The in-step render retry pauses ~2 s; the tests do not.
+jest.mock('node:timers/promises', () => ({
+  setTimeout: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { DocumentTruncatedError } from '../agent/agent-runner.error';
 import type {
   AgentHooks,
@@ -32,7 +37,12 @@ import { parseDesignSystemDefinition } from '../design-system/design-system-defi
 import { DESIGN_SYSTEM_SEED_DIR } from '../design-system/design-system.constants';
 import type { RenderFacts } from '../document-render/render-facts';
 import type { RenderSessionResult } from '../document-render/render-session';
-import type { BuildInput, DocumentCheck } from './engine/workflow.types';
+import type { RenderAttemptUsage } from '../document-render/render-usage.types';
+import type {
+  AcceptedCandidate,
+  BuildInput,
+  DocumentCheck,
+} from './engine/workflow.types';
 import { ArtifactRunProcessor } from './workers/artifact-run.worker.handler';
 
 /**
@@ -41,10 +51,11 @@ import { ArtifactRunProcessor } from './workers/artifact-run.worker.handler';
  * agent and renderer. The renderer replays probe facts the real session
  * recorded (`test:render`), so the judge decides on real measurements.
  *
- * There is no render Repair yet (#168), so the paths are: clean; a static
- * Repair that succeeds; static Repairs that run out; a render finding;
- * truncation of the draft or a Repair; a render that must be retried;
- * egress; and a stale contract.
+ * The paths: clean; a static Repair that succeeds; static Repairs that run
+ * out; a render Repair that succeeds; render Repairs that run out;
+ * truncation of the draft or a Repair; an in-step render retry; a render
+ * outage, then a job retry that resumes from the checkpoint; egress; the run
+ * deadline; and a stale contract.
  * Each asserts step events, `step.progress`, meter records and `failureCode`.
  */
 
@@ -177,11 +188,21 @@ const makeRun = () => {
       .fn<Promise<void>, [string, Buffer, string]>()
       .mockResolvedValue(undefined),
   };
+  // One run record across job attempts, so a retry reads the checkpoint the
+  // failed attempt saved.
+  let accepted: AcceptedCandidate | undefined;
   const runHandle = {
     runId: 'run-1',
+    saveAcceptedCandidate: jest.fn((candidate: AcceptedCandidate) => {
+      accepted = candidate;
+      return Promise.resolve();
+    }),
+    readAcceptedCandidate: jest.fn(() => Promise.resolve(accepted)),
     setCurrentStep: jest.fn().mockResolvedValue(undefined),
     saveResearchContext: jest.fn().mockResolvedValue(undefined),
-    recordRenderAttempt: jest.fn().mockResolvedValue(undefined),
+    recordRenderAttempt: jest
+      .fn<Promise<void>, [RenderAttemptUsage]>()
+      .mockResolvedValue(undefined),
     recordDocumentCheck: jest
       .fn<Promise<void>, [DocumentCheck]>()
       .mockResolvedValue(undefined),
@@ -492,23 +513,137 @@ describe('DOCUMENT generation, end to end', () => {
     });
   });
 
-  describe('a render finding, with no Repair yet', () => {
+  describe('a render finding that one render Repair fixes', () => {
+    beforeEach(() => {
+      run.renderer.render
+        .mockResolvedValueOnce(session(recorded('safe-area')))
+        .mockResolvedValueOnce(
+          session(recorded('margin-sample'), {
+            usage: { durationMs: 16_000, units: 1 },
+          }),
+        );
+    });
+
+    it('should repair in RENDER_PDF, re-render, and promote the repaired source', async () => {
+      await expect(runJob(run)).resolves.toBeUndefined();
+
+      expect(lifecycle(run)).toEqual([
+        'run.started',
+        'step.started RESOLVE_INPUT',
+        'step.completed RESOLVE_INPUT',
+        'step.started GENERATE',
+        'step.completed GENERATE',
+        'step.started RENDER_PDF',
+        'step.completed RENDER_PDF',
+        'step.started PERSIST_VERSION',
+        'step.completed PERSIST_VERSION',
+        'run.completed',
+      ]);
+      const findings =
+        run.runHandle.recordDocumentCheck.mock.calls[1][0].violations.length;
+      expect(progress(run)).toEqual([
+        { step: 'GENERATE', phase: 'draft' },
+        { step: 'RENDER_PDF', phase: 'render', session: 1 },
+        { step: 'RENDER_PDF', phase: 'repair', round: 1, violations: findings },
+        { step: 'RENDER_PDF', phase: 'render', session: 2 },
+      ]);
+      const [[input]] = run.agent.repairDocument.mock.calls;
+      expect(input.candidate).toBe(MARGIN_SAMPLE);
+      expect(input.violations.violations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ code: 'page.safeArea' }),
+        ]),
+      );
+      expect(run.artifacts.promoteVersion).toHaveBeenCalledTimes(1);
+    });
+
+    it('should statically re-check the re-emitted source before rendering it', async () => {
+      await runJob(run);
+
+      expect(
+        run.runHandle.recordDocumentCheck.mock.calls.map(([check]) => [
+          check.phase,
+          check.violations.length > 0,
+        ]),
+      ).toEqual([
+        ['static', false],
+        ['render', true],
+        ['static', false],
+        ['render', false],
+      ]);
+    });
+
+    it('should bill two LLM turns and one pdf_render over both judged sessions', async () => {
+      await runJob(run);
+
+      expect(meterRecords(run)).toEqual(['llm', 'llm', 'pdf_render']);
+      expect(run.creditMeter.toCredits).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'pdf_render',
+          amount: 2,
+          detail: { browserless: { durationMs: 31_000, units: 2 } },
+        }),
+      );
+      expect(
+        run.runHandle.recordRenderAttempt.mock.calls.map(([attempt]) => [
+          attempt.outcome,
+          attempt.billed,
+        ]),
+      ).toEqual([
+        ['FINDINGS', true],
+        ['PASSED', true],
+      ]);
+      expect(run.creditMeter.debit).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('render findings that outlast the Repair budget', () => {
     beforeEach(() => {
       run.renderer.render.mockResolvedValue(session(recorded('safe-area')));
     });
 
-    it('should fail RENDER_PDF as document.repair_exhausted with a billed session and nothing uploaded', async () => {
+    it('should fail RENDER_PDF as document.repair_exhausted after three sessions and two Repairs', async () => {
       await runJob(run);
 
-      expect(lifecycle(run)).toContain('step.failed RENDER_PDF');
+      expect(lifecycle(run)).toEqual([
+        'run.started',
+        'step.started RESOLVE_INPUT',
+        'step.completed RESOLVE_INPUT',
+        'step.started GENERATE',
+        'step.completed GENERATE',
+        'step.started RENDER_PDF',
+        'step.failed RENDER_PDF',
+        'run.failed',
+      ]);
+      expect(
+        progress(run).map(({ phase, round, session: n }) =>
+          [phase, round ?? n].join(' '),
+        ),
+      ).toEqual([
+        'draft ',
+        'render 1',
+        'repair 1',
+        'render 2',
+        'repair 2',
+        'render 3',
+      ]);
       expect(failedWith(run)).toMatchObject({
         code: 'document.repair_exhausted',
       });
-      expect(run.runHandle.recordRenderAttempt).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'FINDINGS', billed: true }),
-      );
+      expect(run.renderer.render).toHaveBeenCalledTimes(3);
+      expect(run.agent.repairDocument).toHaveBeenCalledTimes(2);
       expect(run.objects.put).not.toHaveBeenCalled();
       expect(run.artifacts.promoteVersion).not.toHaveBeenCalled();
+    });
+
+    it('should record every session as billed, meter three LLM turns, and commit nothing', async () => {
+      await runJob(run);
+
+      expect(run.runHandle.recordRenderAttempt).toHaveBeenCalledTimes(3);
+      for (const [attempt] of run.runHandle.recordRenderAttempt.mock.calls) {
+        expect(attempt).toMatchObject({ outcome: 'FINDINGS', billed: true });
+      }
+      expect(meterRecords(run)).toEqual(['llm', 'llm', 'llm']);
       expect(run.creditMeter.debit).not.toHaveBeenCalled();
     });
   });
@@ -597,7 +732,50 @@ describe('DOCUMENT generation, end to end', () => {
     });
   });
 
-  describe('a render that must be retried', () => {
+  describe('a render that settles on its in-step retry', () => {
+    beforeEach(() => {
+      run.renderer.render.mockResolvedValueOnce(
+        session(
+          { ...recorded('margin-sample'), timedOut: true },
+          { pdf: null },
+        ),
+      );
+    });
+
+    it('should render again in RENDER_PDF and promote, spending no Repair', async () => {
+      await expect(runJob(run)).resolves.toBeUndefined();
+
+      expect(lifecycle(run)).toContain('step.completed RENDER_PDF');
+      expect(progress(run)).toEqual([
+        { step: 'GENERATE', phase: 'draft' },
+        { step: 'RENDER_PDF', phase: 'render', session: 1 },
+        { step: 'RENDER_PDF', phase: 'retry', cause: 'timeout' },
+        { step: 'RENDER_PDF', phase: 'render', session: 2 },
+      ]);
+      expect(run.agent.repairDocument).not.toHaveBeenCalled();
+      expect(run.artifacts.promoteVersion).toHaveBeenCalledTimes(1);
+    });
+
+    it('should absorb the timed-out session and bill only the one that passed', async () => {
+      await runJob(run);
+
+      expect(
+        run.runHandle.recordRenderAttempt.mock.calls.map(([attempt]) => [
+          attempt.outcome,
+          attempt.billed,
+        ]),
+      ).toEqual([
+        ['RETRY', false],
+        ['PASSED', true],
+      ]);
+      expect(meterRecords(run)).toEqual(['llm', 'pdf_render']);
+      expect(run.creditMeter.toCredits).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'pdf_render', amount: 1 }),
+      );
+    });
+  });
+
+  describe('a render outage that outlasts the in-step retry', () => {
     beforeEach(() => {
       run.renderer.render.mockResolvedValue(
         session(
@@ -607,15 +785,35 @@ describe('DOCUMENT generation, end to end', () => {
       );
     });
 
-    it('should leave the Attempt GENERATING while job attempts remain, absorbing the session', async () => {
+    it('should leave the Attempt GENERATING while job attempts remain, absorbing both sessions', async () => {
       const error = await runJob(run, makeJob({ attemptsMade: 1 }));
 
       expect(error).toMatchObject({ retryable: true });
       expect(run.artifacts.failVersion).not.toHaveBeenCalled();
       expect(failedWith(run)).toBeUndefined();
-      expect(run.runHandle.recordRenderAttempt).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: 'RETRY', billed: false }),
-      );
+      expect(run.renderer.render).toHaveBeenCalledTimes(2);
+      expect(
+        run.runHandle.recordRenderAttempt.mock.calls.map(([attempt]) => [
+          attempt.outcome,
+          attempt.billed,
+        ]),
+      ).toEqual([
+        ['RETRY', false],
+        ['RETRY', false],
+      ]);
+    });
+
+    it('should checkpoint the statically clean candidate before rendering', async () => {
+      await runJob(run, makeJob({ attemptsMade: 1 }));
+
+      expect(run.runHandle.saveAcceptedCandidate).toHaveBeenCalledWith({
+        candidate: MARGIN_SAMPLE,
+        repairsSpent: 0,
+        commentary: 'Three fixes, one per page. Swipe through.',
+        title: 'Three fixes',
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- an asymmetric matcher
+        savedAt: expect.any(Date),
+      });
     });
 
     it('should fail as render.unavailable when the job attempts are spent', async () => {
@@ -626,6 +824,118 @@ describe('DOCUMENT generation, end to end', () => {
         failureReason:
           "We couldn't render your document right now. Please try again.",
       });
+    });
+
+    describe('then a job retry once Browserless recovers', () => {
+      const resume = async () => {
+        await runJob(run, makeJob({ attemptsMade: 1 }));
+        const before = emitted(run).length;
+        const llmTurns = meterRecords(run).length;
+        run.renderer.render.mockResolvedValue(
+          session(recorded('margin-sample')),
+        );
+        await runJob(run, makeJob({ attemptsMade: 2 }));
+        return {
+          events: emitted(run).slice(before),
+          meter: meterRecords(run).slice(llmTurns),
+        };
+      };
+
+      it('should resume from the checkpoint without calling the model, still announcing GENERATE', async () => {
+        const { events } = await resume();
+
+        expect(run.agent.generateDocument).toHaveBeenCalledTimes(1);
+        expect(
+          events
+            .filter(
+              ({ type }) =>
+                type.startsWith('step.') && type !== 'step.progress',
+            )
+            .map(({ type, data }) => `${type} ${String(data.step)}`),
+        ).toEqual([
+          'step.started RESOLVE_INPUT',
+          'step.completed RESOLVE_INPUT',
+          'step.started GENERATE',
+          'step.completed GENERATE',
+          'step.started RENDER_PDF',
+          'step.completed RENDER_PDF',
+          'step.started PERSIST_VERSION',
+          'step.completed PERSIST_VERSION',
+        ]);
+        expect(
+          events
+            .filter(({ type }) => type === 'step.progress')
+            .map(({ data }) => data),
+        ).toEqual([{ step: 'RENDER_PDF', phase: 'render', session: 1 }]);
+        expect(run.artifacts.promoteVersion).toHaveBeenCalledWith(
+          'artifact-1',
+          1,
+          expect.objectContaining({
+            commentary: 'Three fixes, one per page. Swipe through.',
+          }),
+          { title: 'Three fixes' },
+        );
+      });
+
+      it('should not re-bill the draft, and commit only the render', async () => {
+        const { meter } = await resume();
+
+        expect(meter).toEqual(['pdf_render']);
+        expect(run.creditMeter.debit).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
+
+  describe('the run deadline', () => {
+    const SEVEN_MINUTES = 7 * 60 * 1000;
+    let clock: number;
+
+    beforeEach(() => {
+      clock = Date.UTC(2026, 9, 2);
+      jest.spyOn(Date, 'now').mockImplementation(() => clock);
+    });
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    /** A draft call that takes seven minutes. */
+    const slowDraft = (html: string) => {
+      const draft = run.agent.generateDocument.getMockImplementation()!;
+      run.agent.generateDocument.mockImplementation(async (input, hooks) => {
+        clock += SEVEN_MINUTES;
+        return { ...(await draft(input, hooks)), html };
+      });
+    };
+
+    it('should fail as render.unavailable when it passes before a render session', async () => {
+      slowDraft(MARGIN_SAMPLE);
+
+      const error = await runJob(run, makeJob({ attemptsMade: 3 }));
+
+      expect(error).toMatchObject({ failureCode: 'render.unavailable' });
+      expect(lifecycle(run)).toContain('step.failed RENDER_PDF');
+      expect(failedWith(run)).toMatchObject({ code: 'render.unavailable' });
+      expect(run.renderer.render).not.toHaveBeenCalled();
+    });
+
+    it('should be transient, leaving the Attempt GENERATING while job attempts remain', async () => {
+      slowDraft(MARGIN_SAMPLE);
+
+      const error = await runJob(run, makeJob({ attemptsMade: 1 }));
+
+      expect(error).toMatchObject({ retryable: true });
+      expect(run.artifacts.failVersion).not.toHaveBeenCalled();
+    });
+
+    it('should fail as internal when it passes before a Repair in GENERATE', async () => {
+      slowDraft(OFF_SCALE);
+
+      await runJob(run, makeJob({ attemptsMade: 3 }));
+
+      expect(lifecycle(run)).toContain('step.failed GENERATE');
+      expect(failedWith(run)).toMatchObject({ code: 'internal' });
+      expect(run.agent.repairDocument).not.toHaveBeenCalled();
     });
   });
 

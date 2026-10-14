@@ -26,6 +26,18 @@ export const SCHEDULED_POST_PUBLISHED_EMAIL_JOB_NAME =
 export const DOCUMENT_REPAIR_BUDGET = 2;
 
 /**
+ * The wall-clock bound on one DOCUMENT job attempt (spec §7.5), checked before
+ * each model call and render session.
+ */
+export const DOCUMENT_RUN_DEADLINE_MS = 6 * 60 * 1000;
+
+/**
+ * The pause before a render that hit `render.timeout` or
+ * `render.fonts.failed` is retried once in-step (spec §7.3).
+ */
+export const RENDER_RETRY_DELAY_MS = 2000;
+
+/**
  * The stable code `run.failed` carries beside `failureReason`, and that a failed
  * Attempt stores (document generation spec §7.8). POST and POLL emit only
  * `internal`; the DOCUMENT codes arrive with the document pipeline.

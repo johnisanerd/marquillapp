@@ -75,6 +75,8 @@ type RunEventData =
   | { seq: number; ts: number; step: 'GENERATE'; phase: 'draft' }
   | { seq: number; ts: number; step: 'GENERATE'; phase: 'repair'; round: 1 | 2; violations: number }
   | { seq: number; ts: number; step: 'RENDER_PDF'; phase: 'render'; session: number }
+  | { seq: number; ts: number; step: 'RENDER_PDF'; phase: 'repair'; round: 1 | 2; violations: number }
+  | { seq: number; ts: number; step: 'RENDER_PDF'; phase: 'retry'; cause: 'timeout' | 'fonts' }
   | { seq: number; ts: number; kind: 'llm' | 'web_search' | 'pdf_render'; credits: number; totalCredits: number; detail?: unknown }
   | { seq: number; ts: number; step: WorkflowStep; retryable: boolean; message: string }
   | { seq: number; ts: number; artifactId: string; version: number }
@@ -93,9 +95,11 @@ type RunFailureCode =
 
 - `RESEARCH`: `sourcesFound`.
 - DOCUMENT `GENERATE`: `{ phase: 'draft' }` when the model starts writing the document, then `{ phase: 'repair', round, violations }` each time the model is sent the rule breaks it must fix. `round` counts the run's Repairs (at most 2 per job attempt); `violations` is how many rule breaks were found.
-- DOCUMENT `RENDER_PDF`: `{ phase: 'render', session }` when a render session starts.
+- DOCUMENT `RENDER_PDF`: `{ phase: 'render', session }` when a render session starts, and `{ phase: 'repair', round, violations }` each time the model is sent what the render found, or rule breaks in its fix. `round` is the same counter as in `GENERATE`: the run shares one budget of 2 Repairs per job attempt. `{ phase: 'retry', cause }` when a session timed out or a font failed to load, and the same document is rendered once more; a `render` phase with the next `session` number follows.
 
-DOCUMENT progress carries counts only, never what a check found. More `RENDER_PDF` phases (`repair`, `retry`) arrive with render Repairs; ignore a `phase` you do not recognise.
+When a job attempt fails and BullMQ retries it, a DOCUMENT run that had reached `RENDER_PDF` resumes from the document it was rendering: `GENERATE` still sends `step.started` and `step.completed`, but no `draft` phase, and the model is not called again.
+
+DOCUMENT progress carries counts only, never what a check found. Ignore a `phase` you do not recognise.
 
 ### Failure reason policy
 
