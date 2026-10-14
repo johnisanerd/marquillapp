@@ -5,11 +5,16 @@ import type { ArtifactWriter } from '../../artifact/artifact-writer.interface';
 import type { CreditMeterService } from '../../feature-gating/credit-meter.service';
 import type { FeatureGatingService } from '../../feature-gating/feature-gating.service';
 import { FeatureGateForbiddenException } from '../../feature-gating/feature-gating.exception';
-import { RunKind } from '../../database/schemas';
+import { ArtifactType, RunKind } from '../../database/schemas';
 import {
   DOCUMENT_RUN_DEADLINE_MS,
   FAILURE_REASONS,
 } from '../workflow.constants';
+import { alertSubject } from '../engine/alert';
+import {
+  DocumentRunDiagnostics,
+  type DiagnosticsEnd,
+} from '../engine/document-run-diagnostics';
 import { RunCreditMeter } from '../engine/run-credit-meter';
 import { RunDeadline } from '../engine/run-deadline';
 import {
@@ -23,6 +28,7 @@ import type {
   BuildInput,
   DesignSystemResolver,
   DocumentObjectStore,
+  DocumentDiagnostics,
   DocumentRenderer,
   RunRecordHandle,
   StepContext,
@@ -45,6 +51,13 @@ export interface ArtifactRunDeps {
   runs: RunRecordStore;
   redis: RunEventRedis;
   logger: Logger;
+}
+
+/** What one job attempt leaves behind for `onFailed`. */
+interface JobAttemptState {
+  emitter: RunEventEmitter;
+  meter: RunCreditMeter;
+  diagnostics: DocumentRunDiagnostics;
 }
 
 const TEMPORARY_FAILURE_REASON =
@@ -74,7 +87,7 @@ export const isTerminalJobFailure = (job: Job, error: Error): boolean =>
  * would see the counter run backwards.
  */
 export class ArtifactRunProcessor {
-  private readonly emitters = new Map<string, RunEventEmitter>();
+  private readonly jobAttempts = new Map<string, JobAttemptState>();
 
   constructor(private readonly deps: ArtifactRunDeps) {}
 
@@ -96,7 +109,23 @@ export class ArtifactRunProcessor {
     }
 
     const emitter = new RunEventEmitter(redis, runId, logger);
-    this.emitters.set(runId, emitter);
+    const run = runs.handleFor(runId);
+    const subject = alertSubject(runId, job.data);
+    const meter = new RunCreditMeter(
+      creditMeter,
+      job.data.userId,
+      subject,
+      (event) => emitter.emit(event),
+      logger,
+    );
+    // `attemptsMade` counts the job attempts that already failed.
+    const diagnostics = new DocumentRunDiagnostics({
+      runId,
+      input: job.data,
+      jobAttempt: job.attemptsMade + 1,
+      prior: await this.readPriorDiagnostics(job, run),
+    });
+    this.jobAttempts.set(runId, { emitter, meter, diagnostics });
 
     const emit = (event: EmittedEvent): void => emitter.emit(event);
     const ctx: StepContext = {
@@ -106,11 +135,12 @@ export class ArtifactRunProcessor {
       designSystems: this.deps.designSystems,
       renderer: this.deps.renderer,
       objects: this.deps.objects,
-      meter: new RunCreditMeter(creditMeter, job.data.userId, emit, logger),
+      meter,
       // Per job attempt: a retry gets a fresh budget.
       deadline: RunDeadline.after(DOCUMENT_RUN_DEADLINE_MS),
+      diagnostics,
       emit,
-      run: runs.handleFor(runId),
+      run,
     };
 
     await runWorkflow(job.data, {
@@ -119,52 +149,76 @@ export class ArtifactRunProcessor {
       handlers: artifactStepHandlers,
     });
 
-    // Only on success: a failure hands the emitter, and its `seq`, to `onFailed`.
-    this.emitters.delete(runId);
+    // Only on success: a failure hands the job attempt, and its emitter's
+    // `seq`, to `onFailed`.
+    this.jobAttempts.delete(runId);
+
+    await this.recordDocumentRun(job, runId, diagnostics, {
+      outcome: 'READY',
+      credits: meter.creditsUsed,
+    });
   }
 
   /**
-   * Fired on every failed attempt. Only the last one is the run's end; the
-   * others leave the version `GENERATING` and ride the attempt budget, having
-   * already emitted `step.failed` from inside the engine.
+   * Fired on every failed job attempt. Only the last one is the run's end;
+   * the others leave the version `GENERATING` and ride the attempt budget,
+   * having already emitted `step.failed` from inside the engine.
+   *
+   * A DOCUMENT run's error text can quote model output, so it is kept in the
+   * run's diagnostics and never logged (spec §11.6); the logs get its code.
    */
   async onFailed(job: Job<BuildInput>, error: Error): Promise<void> {
     const { logger } = this.deps;
-
-    const runId = job.id;
-    if (!runId) {
-      logger.error(`Artifact run job failed without an id: ${error.message}`);
-      return;
-    }
-
-    // Retained across attempts so `run.failed` continues the run's `seq`; a
-    // retry that ran here handed its emitter over on the way out. The retry path
-    // is done with it either way — the next attempt builds a fresh one.
-    const emitter =
-      this.emitters.get(runId) ??
-      new RunEventEmitter(this.deps.redis, runId, logger);
-    this.emitters.delete(runId);
-
-    if (!isTerminalJobFailure(job, error)) {
-      logger.warn(
-        `Artifact run ${runId} failed (attempt ${job.attemptsMade}/${job.opts.attempts ?? 1}); retrying: ${error.message}`,
-      );
-      return;
-    }
-
-    // Absent from the map only when the attempt ran in another process; a fresh
-    // emitter restarts `seq`, a lesser evil than losing the client's `run.failed`.
-    logger.error(`Artifact run ${runId} failed terminally: ${error.message}`);
+    const isDocument = job.data.type === ArtifactType.DOCUMENT;
     // A DOCUMENT failure carries a stable code with its own client wording;
     // anything else is `internal`, described as before.
     const failureCode = failureCodeOf(error);
+    const cause = isDocument ? failureCode : error.message;
+
+    const runId = job.id;
+    if (!runId) {
+      logger.error(`Artifact run job failed without an id: ${cause}`);
+      return;
+    }
+
+    // Retained across job attempts so `run.failed` continues the run's `seq`;
+    // a retry that ran here handed its emitter over on the way out. The retry
+    // path is done with it either way — the next job attempt builds a fresh one.
+    const jobAttempt = this.jobAttempts.get(runId);
+    const emitter =
+      jobAttempt?.emitter ??
+      new RunEventEmitter(this.deps.redis, runId, logger);
+    this.jobAttempts.delete(runId);
+    const diagnostics = () =>
+      jobAttempt?.diagnostics ?? this.diagnosticsFromRecord(job, runId);
+    const credits = jobAttempt?.meter.creditsUsed ?? 0;
+
+    if (!isTerminalJobFailure(job, error)) {
+      logger.warn(
+        `Artifact run ${runId} failed (attempt ${job.attemptsMade}/${job.opts.attempts ?? 1}); retrying: ${cause}`,
+      );
+      if (isDocument) {
+        await this.recordDocumentRun(job, runId, await diagnostics(), {
+          outcome: 'RETRYING',
+          failureCode,
+          message: error.message,
+          credits,
+        });
+      }
+      return;
+    }
+
+    // Absent from the map only when the job attempt ran in another process; a
+    // fresh emitter restarts `seq`, a lesser evil than losing the client's
+    // `run.failed`.
+    logger.error(`Artifact run ${runId} failed terminally: ${cause}`);
     const failureReason =
       FAILURE_REASONS[failureCode] ??
       (isUnrecoverableFailure(error)
         ? describeError(error)
         : TEMPORARY_FAILURE_REASON);
 
-    await handleTerminalFailure(
+    const storedCode = await handleTerminalFailure(
       {
         artifacts: this.deps.artifacts,
         run: this.deps.runs.handleFor(runId),
@@ -178,6 +232,91 @@ export class ArtifactRunProcessor {
         failureReason,
       },
     );
+
+    if (isDocument) {
+      await this.recordDocumentRun(job, runId, await diagnostics(), {
+        outcome: 'FAILED',
+        failureCode: storedCode,
+        message: error.message,
+        credits,
+      });
+    }
+  }
+
+  /**
+   * DOCUMENT: writes the run's diagnostics and, once the run has ended, logs
+   * its one completion line (spec §11.1, §11.6). Best-effort: describing a
+   * run must never change how it ended.
+   */
+  private async recordDocumentRun(
+    job: Job<BuildInput>,
+    runId: string,
+    diagnostics: DocumentRunDiagnostics,
+    end: DiagnosticsEnd,
+  ): Promise<void> {
+    if (job.data.type !== ArtifactType.DOCUMENT) return;
+    const { logger } = this.deps;
+
+    const finished = diagnostics.finish(end);
+    try {
+      await this.deps.runs
+        .handleFor(runId)
+        .saveDocumentDiagnostics(
+          finished.diagnostics,
+          finished.failedCandidateSource,
+        );
+    } catch (error: unknown) {
+      logger.error(
+        `Could not save the diagnostics of run ${runId}: ${describeError(error)}`,
+      );
+    }
+    if (end.outcome !== 'RETRYING') logger.log(finished.completionLine);
+  }
+
+  /** DOCUMENT: what earlier job attempts recorded. Best-effort. */
+  private async readPriorDiagnostics(
+    job: Job<BuildInput>,
+    run: RunRecordHandle,
+  ): Promise<DocumentDiagnostics | undefined> {
+    if (job.data.type !== ArtifactType.DOCUMENT) return undefined;
+    try {
+      return await run.readDocumentDiagnostics();
+    } catch (error: unknown) {
+      this.deps.logger.warn(
+        `Could not read the diagnostics of run ${run.runId}: ${describeError(error)}`,
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * The failed job attempt ran in another process, or never started: what
+   * the run record holds is all there is to describe. That is the earlier
+   * job attempts' diagnostics and the checkpoint, whose text stands in as
+   * the failed candidate.
+   */
+  private async diagnosticsFromRecord(
+    job: Job<BuildInput>,
+    runId: string,
+  ): Promise<DocumentRunDiagnostics> {
+    const run = this.deps.runs.handleFor(runId);
+    const diagnostics = new DocumentRunDiagnostics({
+      runId,
+      input: job.data,
+      jobAttempt: job.attemptsMade,
+      prior: await this.readPriorDiagnostics(job, run),
+    });
+    try {
+      const accepted = await run.readAcceptedCandidate();
+      if (accepted) {
+        diagnostics.recordAccepted(accepted.candidate, accepted.repairsSpent);
+      }
+    } catch (error: unknown) {
+      this.deps.logger.warn(
+        `Could not read the checkpoint of run ${runId}: ${describeError(error)}`,
+      );
+    }
+    return diagnostics;
   }
 
   /**

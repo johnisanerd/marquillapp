@@ -8,12 +8,14 @@ import { RenderSessionError } from '../../document-render/render-session.error';
 import type { RenderSessionResult } from '../../document-render/render-session';
 import type {
   BrowserlessUsage,
+  RenderAttemptUsage,
   RenderSessionOutcome,
 } from '../../document-render/render-usage.types';
 import { assemble } from '../../document-source/assemble';
 import { IconInliningError } from '../../document-source/icon-inlining.error';
 import type { Violation } from '../../document-source/violation';
 import { USAGE_KINDS } from '../../feature-gating/credit-meter.constants';
+import { alert, alertSubject, type AlertSubject } from '../engine/alert';
 import { RunEventType } from '../engine/run-event.types';
 import { terminal, transient } from '../engine/workflow.error';
 import type {
@@ -30,6 +32,7 @@ import {
 } from '../workflow.constants';
 import { sha256Hex } from '../../document-source/sha256';
 import {
+  recordCheck,
   repair,
   repairStatically,
   type RepairedCandidate,
@@ -101,6 +104,7 @@ export const renderPdfStep: StepHandler = async (state, ctx) => {
   }
   const { definition, fragment } = designSystem;
   const label = `artifact ${artifactId} v${version}`;
+  const subject = alertSubject(ctx.run.runId, state.input);
   const scope: RepairScope = {
     ctx,
     step: WorkflowStep.RENDER_PDF,
@@ -144,26 +148,21 @@ export const renderPdfStep: StepHandler = async (state, ctx) => {
 
       const session = await renderSession(ctx, definition, documentSource);
       const violations = judge(definition, session.facts);
-      await ctx.run.recordDocumentCheck({
-        phase: 'render',
-        candidateSha256: sha256Hex(candidate),
-        violations,
-        checkedAt: new Date(),
-      });
+      await recordCheck(ctx, 'render', candidate, violations);
 
       const outcome = outcomeOf(violations);
       if (outcome === 'PASSED') return { session, violations, outcome };
 
-      await ctx.run.recordRenderAttempt({
+      await recordRenderAttempt(ctx, {
         ...session.usage,
         outcome,
         billed: outcome === 'FINDINGS',
       });
 
       if (outcome === 'EGRESS') {
-        ctx.logger.error(
-          `[ALERT render.egress] ${label}: the render session refused ${session.refusedRequests.length} request(s) the static check let through`,
-        );
+        alert(ctx.logger, 'render.egress', subject, {
+          refused: session.refusedRequests.length,
+        });
         throw terminal(
           `The Document Source for ${label} requested a refused URL`,
         );
@@ -193,7 +192,12 @@ export const renderPdfStep: StepHandler = async (state, ctx) => {
   };
 
   for (;;) {
-    const documentSource = assembleSource(definition, current.candidate);
+    const documentSource = assembleSource(
+      ctx,
+      definition,
+      current.candidate,
+      subject,
+    );
 
     // The checkpoint: a job retry after a render outage resumes from here
     // without calling the model (spec §7.3).
@@ -205,6 +209,7 @@ export const renderPdfStep: StepHandler = async (state, ctx) => {
         : {}),
       savedAt: new Date(),
     });
+    ctx.diagnostics.recordAccepted(current.candidate, current.repairsSpent);
 
     const { session, violations, outcome } = await renderJudged(
       documentSource,
@@ -240,18 +245,37 @@ interface JudgedSession {
   outcome: 'PASSED' | 'FINDINGS';
 }
 
+/**
+ * Assembles the Document Source. An icon assembly cannot fill is terminal and
+ * alerts; the icon's name stays out of the alert and in the run's failure.
+ */
 function assembleSource(
+  ctx: StepContext,
   definition: DesignSystemDefinition,
   candidate: string,
+  subject: AlertSubject,
 ): string {
   try {
     return assemble(definition, candidate);
   } catch (error: unknown) {
     if (error instanceof IconInliningError) {
+      alert(ctx.logger, error.alertTag, subject);
       throw terminal(error.message, error);
     }
     throw error;
   }
+}
+
+/**
+ * Records one render session on the run, and counts it in the run's
+ * diagnostics, which refer to these entries rather than copy them.
+ */
+async function recordRenderAttempt(
+  ctx: StepContext,
+  usage: RenderAttemptUsage,
+): Promise<void> {
+  await ctx.run.recordRenderAttempt(usage);
+  ctx.diagnostics.recordRenderSession();
 }
 
 /** One render session. A session that fails outright is recorded, unbilled. */
@@ -264,7 +288,7 @@ async function renderSession(
     return await ctx.renderer.render(definition, documentSource);
   } catch (error: unknown) {
     if (error instanceof RenderSessionError) {
-      await ctx.run.recordRenderAttempt({
+      await recordRenderAttempt(ctx, {
         ...error.usage,
         outcome: 'ERROR',
         billed: false,
@@ -301,7 +325,7 @@ async function publish(
 ): Promise<Partial<RunState>> {
   const { artifactId, version } = state.input;
   const recordSession = (coverFailure?: string) =>
-    ctx.run.recordRenderAttempt({
+    recordRenderAttempt(ctx, {
       ...session.usage,
       outcome: 'PASSED',
       billed: true,
@@ -361,6 +385,7 @@ async function publish(
   }
 
   await recordSession(coverFailure);
+  ctx.diagnostics.recordPageCount(pageCount);
 
   // One record per run over every session with a verdict, so the meter's
   // `max(minimum, surcharge × units)` applies the minimum once (spec §7.7).

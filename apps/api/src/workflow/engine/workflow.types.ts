@@ -90,6 +90,109 @@ export interface DocumentCheck {
   checkedAt: Date;
 }
 
+/** A lowercase hex SHA-256 of a Candidate Source, its only identity here. */
+export type CandidateSha256 = string;
+
+/** A violation `code`: a Definition key path or an `envelope.*` code. */
+export type ViolationCode = Violation['code'];
+
+/** How one check of a Candidate Source ended: codes and counts, no details. */
+export interface CheckOutcome {
+  phase: DocumentCheck['phase'];
+  passed: boolean;
+  /** Violations counted per `code`, in first-seen order. */
+  violations: { code: ViolationCode; count: number }[];
+}
+
+/** Every check one Candidate Source went through, passes included. */
+export interface CandidateDiagnostics {
+  candidateSha256: CandidateSha256;
+  checks: CheckOutcome[];
+}
+
+/**
+ * A job attempt that ended in failure. `message` is the error's own text,
+ * which can quote model output: it lives here, never in the logs.
+ */
+export interface JobAttemptFailure {
+  jobAttempt: number;
+  failureCode: FailureCode;
+  message: string;
+}
+
+/**
+ * DOCUMENT: what one run did, across every job attempt (spec §11.1). The
+ * worker writes it when a job attempt fails and when the run ends, and the
+ * next job attempt carries it on. Candidate Source text is kept apart and
+ * expires; this block is kept indefinitely.
+ */
+export interface DocumentDiagnostics {
+  /** The latest BullMQ job attempt, one-based. */
+  jobAttempt: number;
+  /** Absent only when the job carried no pin, a wiring bug. */
+  pin?: DesignSystemPin;
+  /** `RETRYING` until a job attempt ends the run. */
+  outcome: 'READY' | 'FAILED' | 'RETRYING';
+  /** The run's final code, the same one its record and Attempt store. */
+  failureCode?: FailureCode;
+  /** Every job attempt that failed, the final one included. */
+  jobAttemptFailures: JobAttemptFailure[];
+  /** In the order they were first checked. */
+  candidates: CandidateDiagnostics[];
+  /** Turns of `DOCUMENT_REPAIR_BUDGET` the latest job attempt had spent. */
+  repairRounds: number;
+  /** The last model turn's. */
+  finishReason?: string;
+  /** Completion tokens over every model turn of every job attempt. */
+  outputTokens: number;
+  pageCount?: number;
+  /** Summed over job attempts. */
+  stepWallTimeMs: Partial<Record<WorkflowStep, number>>;
+  /** Summed over job attempts. */
+  wallTimeMs: number;
+  /**
+   * A reference, not a copy: the run's `renderAttempts` holds every session
+   * of the run, and `sessions` is how many of them these diagnostics saw.
+   */
+  renderAttempts: { sessions: number };
+  /** The run's `acceptedCandidate` checkpoint, by hash. */
+  acceptedCandidate?: {
+    candidateSha256: CandidateSha256;
+    repairsSpent: number;
+  };
+  /**
+   * On failure, the last Candidate Source checked or checkpointed, by hash;
+   * its text is kept apart and expires.
+   */
+  failedCandidate?: { candidateSha256: CandidateSha256 };
+  /** What the latest job attempt metered; committed only when `READY`. */
+  credits: number;
+  recordedAt: Date;
+}
+
+/**
+ * DOCUMENT: the steps' half of the run's diagnostics. Every call is
+ * synchronous and in-memory; the worker writes the result.
+ */
+export interface RunDiagnostics {
+  stepStarted(step: WorkflowStep): void;
+  stepCompleted(step: WorkflowStep): void;
+  recordModelTurn(turn: {
+    completionTokens: number;
+    finishReason?: string;
+  }): void;
+  recordCheck(
+    phase: DocumentCheck['phase'],
+    candidate: string,
+    violations: Violation[],
+  ): void;
+  /** The job attempt's running total, as it changes. */
+  recordRepairsSpent(repairsSpent: number): void;
+  recordAccepted(candidate: string, repairsSpent: number): void;
+  recordRenderSession(): void;
+  recordPageCount(pageCount: number): void;
+}
+
 /**
  * One state object with typed, named optional slots. The step list is assembled
  * dynamically, so TypeScript cannot infer a chained input→output pipeline;
@@ -177,6 +280,16 @@ export interface RunRecordHandle {
   saveAcceptedCandidate(accepted: AcceptedCandidate): Promise<void>;
   /** The checkpoint an earlier job attempt of this run saved, if any. */
   readAcceptedCandidate(): Promise<AcceptedCandidate | undefined>;
+  /** DOCUMENT: what earlier job attempts of this run recorded, if any. */
+  readDocumentDiagnostics(): Promise<DocumentDiagnostics | undefined>;
+  /**
+   * DOCUMENT: the run's diagnostics and, on failure, the text of its failed
+   * Candidate Source, which is kept apart so it expires.
+   */
+  saveDocumentDiagnostics(
+    diagnostics: DocumentDiagnostics,
+    failedCandidateSource?: string,
+  ): Promise<void>;
   getLatestCompletedResearch(
     artifactId: string,
   ): Promise<ResearchResult | undefined>;
@@ -205,6 +318,7 @@ export interface StepContext {
   renderer: DocumentRenderer;
   objects: DocumentObjectStore;
   deadline: RunDeadlineGuard;
+  diagnostics: RunDiagnostics;
   /** `step.progress` only. Lifecycle events are the core's job. */
   emit: (event: EmittedEvent) => void;
   run: RunRecordHandle;

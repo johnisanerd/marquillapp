@@ -50,6 +50,7 @@ const makeStep = () => {
   const renderer = { render: jest.fn() };
   const objects = { put: jest.fn().mockResolvedValue(undefined) };
   const run = {
+    runId: 'run-1',
     recordRenderAttempt: jest.fn().mockResolvedValue(undefined),
     recordDocumentCheck: jest.fn().mockResolvedValue(undefined),
     saveAcceptedCandidate: jest.fn().mockResolvedValue(undefined),
@@ -58,6 +59,16 @@ const makeStep = () => {
   const meter = { record: jest.fn() };
   const emit = jest.fn();
   const logger = { error: jest.fn(), warn: jest.fn() };
+  const diagnostics = {
+    stepStarted: jest.fn(),
+    stepCompleted: jest.fn(),
+    recordModelTurn: jest.fn(),
+    recordCheck: jest.fn(),
+    recordRepairsSpent: jest.fn(),
+    recordAccepted: jest.fn(),
+    recordRenderSession: jest.fn(),
+    recordPageCount: jest.fn(),
+  };
   const agent = {
     repairDocument: jest
       .fn()
@@ -66,6 +77,7 @@ const makeStep = () => {
   const ctx = {
     agent,
     deadline,
+    diagnostics,
     renderer,
     objects,
     run,
@@ -104,7 +116,17 @@ const makeStep = () => {
 
   return {
     ctx,
-    mocks: { agent, deadline, renderer, objects, run, meter, emit, logger },
+    mocks: {
+      agent,
+      deadline,
+      diagnostics,
+      renderer,
+      objects,
+      run,
+      meter,
+      emit,
+      logger,
+    },
     fixtures: { state, definition, session },
   };
 };
@@ -487,7 +509,9 @@ describe('renderPdfStep', () => {
       expect(error).toMatchObject({ retryable: false });
       expect((error as WorkflowError).code).toBeUndefined();
       expect(mocks.logger.error).toHaveBeenCalledWith(
-        expect.stringContaining('[ALERT render.egress]'),
+        expect.stringMatching(
+          /^\[ALERT render\.egress\] run=run-1 artifact=artifact-1 version=\d+/,
+        ),
       );
       expect(mocks.run.recordRenderAttempt).toHaveBeenCalledWith(
         expect.objectContaining({ outcome: 'EGRESS', billed: false }),
@@ -687,15 +711,69 @@ describe('renderPdfStep', () => {
     });
   });
 
-  it('should fail terminally when icon inlining fails', async () => {
+  it('should fail terminally and alert icon.inline_failed when icon inlining fails', async () => {
     mockedAssemble.mockImplementation(() => {
-      throw new IconInliningError('unknown icon');
+      throw new IconInliningError('icon "secret-name" is not in the catalog');
     });
 
     await expect(renderPdfStep(fixtures.state, ctx)).rejects.toMatchObject({
       retryable: false,
     });
     expect(mocks.renderer.render).not.toHaveBeenCalled();
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      '[ALERT icon.inline_failed] run=run-1 artifact=artifact-1 version=3',
+    );
+  });
+
+  describe('diagnostics', () => {
+    it('should report each check, the checkpoint, the session and the page count on a pass', async () => {
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(mocks.diagnostics.recordAccepted).toHaveBeenCalledWith(
+        CANDIDATE,
+        0,
+      );
+      expect(mocks.diagnostics.recordCheck).toHaveBeenCalledWith(
+        'render',
+        CANDIDATE,
+        [],
+      );
+      expect(mocks.diagnostics.recordRenderSession).toHaveBeenCalledTimes(1);
+      expect(mocks.diagnostics.recordPageCount).toHaveBeenCalledWith(4);
+    });
+
+    it('should count one session per recorded render attempt, retries and Repairs included', async () => {
+      mockedJudge
+        .mockReturnValueOnce([{ code: 'render.timeout', detail: 'slow' }])
+        .mockReturnValueOnce([SAFE_AREA])
+        .mockReturnValueOnce([]);
+
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(mocks.diagnostics.recordRenderSession).toHaveBeenCalledTimes(
+        mocks.run.recordRenderAttempt.mock.calls.length,
+      );
+      expect(mocks.diagnostics.recordRenderSession).toHaveBeenCalledTimes(3);
+      expect(mocks.diagnostics.recordRepairsSpent).toHaveBeenCalledWith(1);
+      expect(mocks.diagnostics.recordAccepted).toHaveBeenLastCalledWith(
+        REPAIRED,
+        1,
+      );
+    });
+
+    it('should count a session that failed outright', async () => {
+      mocks.renderer.render.mockRejectedValue(
+        new RenderSessionError('socket hang up', {
+          durationMs: 3_000,
+          units: 1,
+        }),
+      );
+
+      await renderPdfStep(fixtures.state, ctx).catch(() => undefined);
+
+      expect(mocks.diagnostics.recordRenderSession).toHaveBeenCalledTimes(1);
+      expect(mocks.diagnostics.recordPageCount).not.toHaveBeenCalled();
+    });
   });
 
   it('should fail terminally when GENERATE left no Candidate Source', async () => {

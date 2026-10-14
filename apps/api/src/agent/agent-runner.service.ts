@@ -468,8 +468,10 @@ export class AgentRunnerService implements AgentRunner {
       );
     }
 
+    // The validation error can quote the model's output, a Candidate Source,
+    // which is never logged (spec §11.6).
     this.logger.warn(
-      `Generated DOCUMENT ${call} failed envelope validation; attempting one repair: ${describeError(validationError)}`,
+      `Generated DOCUMENT ${call} failed envelope validation; attempting one repair`,
     );
 
     const repaired = await this.complete(
@@ -612,7 +614,11 @@ export class AgentRunnerService implements AgentRunner {
       },
     );
 
-    hooks?.onUsage?.({ ...usage, model: this.generationModel });
+    hooks?.onUsage?.({
+      ...usage,
+      model: this.generationModel,
+      ...(finishReason ? { finishReason } : {}),
+    });
 
     return { text, ...(finishReason ? { finishReason } : {}) };
   }

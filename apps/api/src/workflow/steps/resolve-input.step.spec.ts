@@ -28,7 +28,7 @@ const makeStep = () => {
     readVersion: jest.fn(),
     readRefineInput: jest.fn(),
   };
-  const run = { getLatestCompletedResearch: jest.fn() };
+  const run = { runId: 'run-1', getLatestCompletedResearch: jest.fn() };
   const designSystems = { resolve: jest.fn() };
   const objects = { get: jest.fn() };
   const logger = { error: jest.fn() };
@@ -228,7 +228,9 @@ describe('resolveInputStep', () => {
         code: 'design_system.unavailable',
       });
       expect(mocks.logger.error).toHaveBeenCalledWith(
-        expect.stringContaining('[ALERT design_system.unresolvable]'),
+        expect.stringMatching(
+          /^\[ALERT design_system\.unresolvable\] run=run-1 artifact=artifact-1 version=\d+/,
+        ),
       );
     });
 
@@ -339,7 +341,9 @@ describe('resolveInputStep', () => {
             code: 'artifact.source_missing',
           });
           expect(mocks.logger.error).toHaveBeenCalledWith(
-            expect.stringContaining('[ALERT artifact.source_missing]'),
+            expect.stringMatching(
+              /^\[ALERT artifact\.source_missing\] run=run-1 artifact=artifact-1 version=\d+/,
+            ),
           );
         },
       );

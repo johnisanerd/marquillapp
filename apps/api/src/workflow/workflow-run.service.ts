@@ -1,16 +1,29 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, isValidObjectId } from 'mongoose';
-import { RunKind, RunStatus, WorkflowRun } from '../database/schemas';
+import {
+  RunCandidateSource,
+  RunCandidateSourceRole,
+  RunKind,
+  RunStatus,
+  WorkflowRun,
+  type StoredAcceptedCandidate,
+} from '../database/schemas';
+import { sha256Hex } from '../document-source/sha256';
 import type { ResearchResult } from '../agent/agent-runner.interface';
 import type { RenderAttemptUsage } from '../document-render/render-usage.types';
 import type {
   AcceptedCandidate,
   BuildInput,
   DocumentCheck,
+  DocumentDiagnostics,
   RunRecordHandle,
 } from './engine/workflow.types';
-import { FailureCode, WorkflowStep } from './workflow.constants';
+import {
+  CANDIDATE_SOURCE_RETENTION_MS,
+  FailureCode,
+  WorkflowStep,
+} from './workflow.constants';
 
 export interface CreateRunInput {
   userId: string;
@@ -32,6 +45,8 @@ export class WorkflowRunService {
   constructor(
     @InjectModel(WorkflowRun.name)
     private readonly workflowRunModel: Model<WorkflowRun>,
+    @InjectModel(RunCandidateSource.name)
+    private readonly candidateSourceModel: Model<RunCandidateSource>,
   ) {}
 
   async createRun(input: CreateRunInput): Promise<WorkflowRun> {
@@ -127,8 +142,14 @@ export class WorkflowRunService {
       recordDocumentCheck: (check: DocumentCheck) =>
         this.appendDocumentCheck(runId, check),
       saveAcceptedCandidate: (accepted: AcceptedCandidate) =>
-        this.patch(runId, { acceptedCandidate: accepted }),
+        this.saveAcceptedCandidate(runId, accepted),
       readAcceptedCandidate: () => this.readAcceptedCandidate(runId),
+      readDocumentDiagnostics: () => this.readDocumentDiagnostics(runId),
+      saveDocumentDiagnostics: (
+        diagnostics: DocumentDiagnostics,
+        failedCandidateSource?: string,
+      ) =>
+        this.saveDocumentDiagnostics(runId, diagnostics, failedCandidateSource),
       getLatestCompletedResearch: (artifactId: string) =>
         this.getLatestCompletedResearch(artifactId),
       complete: (creditsUsed: number) =>
@@ -152,15 +173,98 @@ export class WorkflowRunService {
     );
   }
 
+  /**
+   * The text first, then the run's hash of it: a checkpoint the run records
+   * always has its text, until the text expires.
+   */
+  private async saveAcceptedCandidate(
+    runId: string,
+    { candidate, ...accepted }: AcceptedCandidate,
+  ): Promise<void> {
+    const candidateSha256 = await this.saveCandidateSource(
+      runId,
+      RunCandidateSourceRole.ACCEPTED,
+      candidate,
+    );
+    const stored: StoredAcceptedCandidate = { ...accepted, candidateSha256 };
+    await this.patch(runId, { acceptedCandidate: stored });
+  }
+
+  /**
+   * No checkpoint when none was saved, when its text has expired, or when it
+   * predates `run_candidate_sources` and so has no hash to find its text by.
+   */
   private async readAcceptedCandidate(
     runId: string,
   ): Promise<AcceptedCandidate | undefined> {
     const run = await this.workflowRunModel
       .findById(runId)
       .select({ acceptedCandidate: 1 })
-      .lean<{ acceptedCandidate?: AcceptedCandidate }>()
+      .lean<{ acceptedCandidate?: StoredAcceptedCandidate }>()
       .exec();
-    return run?.acceptedCandidate ?? undefined;
+    if (!run?.acceptedCandidate?.candidateSha256) return undefined;
+    const { candidateSha256, ...accepted } = run.acceptedCandidate;
+
+    const text = await this.candidateSourceModel
+      .findOne(
+        {
+          ...candidateSourceOf(runId, RunCandidateSourceRole.ACCEPTED),
+          candidateSha256,
+        },
+        { candidate: 1 },
+      )
+      .lean<{ candidate: string }>()
+      .exec();
+    if (!text) return undefined;
+
+    return { ...accepted, candidate: text.candidate };
+  }
+
+  private async readDocumentDiagnostics(
+    runId: string,
+  ): Promise<DocumentDiagnostics | undefined> {
+    const run = await this.workflowRunModel
+      .findById(runId)
+      .select({ documentDiagnostics: 1 })
+      .lean<{ documentDiagnostics?: DocumentDiagnostics }>()
+      .exec();
+    return run?.documentDiagnostics ?? undefined;
+  }
+
+  private async saveDocumentDiagnostics(
+    runId: string,
+    diagnostics: DocumentDiagnostics,
+    failedCandidateSource?: string,
+  ): Promise<void> {
+    if (failedCandidateSource !== undefined) {
+      await this.saveCandidateSource(
+        runId,
+        RunCandidateSourceRole.FAILED,
+        failedCandidateSource,
+      );
+    }
+    await this.patch(runId, { documentDiagnostics: diagnostics });
+  }
+
+  /** Upserts one of the run's Candidate Sources; returns its hash. */
+  private async saveCandidateSource(
+    runId: string,
+    role: RunCandidateSourceRole,
+    candidate: string,
+  ): Promise<string> {
+    const candidateSha256 = sha256Hex(candidate);
+    await this.candidateSourceModel.updateOne(
+      candidateSourceOf(runId, role),
+      {
+        $set: {
+          candidateSha256,
+          candidate,
+          expiresAt: new Date(Date.now() + CANDIDATE_SOURCE_RETENTION_MS),
+        },
+      },
+      { upsert: true },
+    );
+    return candidateSha256;
   }
 
   private async appendRenderAttempt(
@@ -183,3 +287,9 @@ export class WorkflowRunService {
     );
   }
 }
+
+/** The one Candidate Source a run keeps in `role`. */
+const candidateSourceOf = (runId: string, role: RunCandidateSourceRole) => ({
+  run: new Types.ObjectId(runId),
+  role,
+});

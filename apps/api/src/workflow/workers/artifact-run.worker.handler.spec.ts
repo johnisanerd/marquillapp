@@ -90,6 +90,9 @@ const makeProcessor = () => {
     getLatestCompletedResearch: jest.fn(),
     complete: jest.fn().mockResolvedValue(undefined),
     fail: jest.fn().mockResolvedValue(undefined),
+    readAcceptedCandidate: jest.fn().mockResolvedValue(undefined),
+    readDocumentDiagnostics: jest.fn().mockResolvedValue(undefined),
+    saveDocumentDiagnostics: jest.fn().mockResolvedValue(undefined),
   };
   const runs = { handleFor: jest.fn().mockReturnValue(runHandle) };
   const creditMeter = {
@@ -458,6 +461,121 @@ describe('ArtifactRunProcessor', () => {
       expect(emittedData(mocks.redis)[0]).toMatchObject({
         code: 'internal',
         failureReason: 'commentary must not be empty',
+      });
+    });
+
+    it('should record no document diagnostics and log no completion line for a POST run', async () => {
+      await processor.process(makeJob());
+      await processor.onFailed(makeJob(), new UnrecoverableError('nope'));
+
+      expect(mocks.runHandle.saveDocumentDiagnostics).not.toHaveBeenCalled();
+      expect(
+        (mocks.logger.log as jest.Mock).mock.calls.filter(([line]) =>
+          String(line).startsWith('[DOCUMENT_RUN]'),
+        ),
+      ).toEqual([]);
+    });
+
+    describe('for a DOCUMENT run', () => {
+      const documentJob = (attemptsMade: number) =>
+        makeJob({
+          attemptsMade,
+          data: buildInput({
+            type: 'DOCUMENT',
+            designSystem: { id: 'margin', version: 2 },
+          } as Partial<BuildInput>),
+        });
+      const secret = new UnrecoverableError(
+        'failed validation: Unexpected token in "<section>SECRET</section>"',
+      );
+      const logged = () =>
+        JSON.stringify([
+          (mocks.logger.log as jest.Mock).mock.calls,
+          (mocks.logger.warn as jest.Mock).mock.calls,
+          (mocks.logger.error as jest.Mock).mock.calls,
+        ]);
+
+      it('should log the code, not the error text, when the run fails terminally', async () => {
+        await processor.onFailed(documentJob(1), secret);
+
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'Artifact run run-1 failed terminally: internal',
+        );
+        expect(logged()).not.toContain('SECRET');
+        expect(mocks.runHandle.saveDocumentDiagnostics).toHaveBeenCalledWith(
+          expect.objectContaining({
+            jobAttemptFailures: [
+              {
+                jobAttempt: 1,
+                failureCode: 'internal',
+                message: secret.message,
+              },
+            ],
+          }),
+          undefined,
+        );
+      });
+
+      it('should log the code, not the error text, when the job attempt will be retried', async () => {
+        await processor.onFailed(
+          documentJob(1),
+          new Error('timed out reading "<section>SECRET</section>"'),
+        );
+
+        expect(mocks.logger.warn).toHaveBeenCalledWith(
+          'Artifact run run-1 failed (attempt 1/3); retrying: internal',
+        );
+        expect(logged()).not.toContain('SECRET');
+        expect(mocks.runHandle.saveDocumentDiagnostics).toHaveBeenCalledWith(
+          expect.objectContaining({ outcome: 'RETRYING' }),
+          undefined,
+        );
+      });
+
+      it('should carry on what earlier job attempts recorded, and the checkpoint, when the job attempt ran in another process', async () => {
+        mocks.runHandle.readDocumentDiagnostics.mockResolvedValue({
+          jobAttempt: 1,
+          outcome: 'RETRYING',
+          jobAttemptFailures: [
+            { jobAttempt: 1, failureCode: 'render.unavailable', message: 'm' },
+          ],
+          candidates: [],
+          repairRounds: 0,
+          outputTokens: 6000,
+          stepWallTimeMs: {},
+          wallTimeMs: 90_000,
+          renderAttempts: { sessions: 2 },
+          credits: 180,
+          recordedAt: new Date(),
+        });
+        mocks.runHandle.readAcceptedCandidate.mockResolvedValue({
+          commentary: 'c',
+          candidate: '<section class="page"></section>',
+          repairsSpent: 0,
+          savedAt: new Date(),
+        });
+
+        await processor.onFailed(documentJob(3), new Error('stalled'));
+
+        const [diagnostics, failedCandidateSource] = mocks.runHandle
+          .saveDocumentDiagnostics.mock.calls[0] as [
+          Record<string, unknown>,
+          string,
+        ];
+        expect(diagnostics).toMatchObject({
+          jobAttempt: 3,
+          pin: { id: 'margin', version: 2 },
+          outcome: 'FAILED',
+          failureCode: 'internal',
+          outputTokens: 6000,
+          renderAttempts: { sessions: 2 },
+          credits: 0,
+        });
+        expect(diagnostics.wallTimeMs).toBeGreaterThanOrEqual(90_000);
+        expect(failedCandidateSource).toBe('<section class="page"></section>');
+        expect(mocks.logger.log).toHaveBeenCalledWith(
+          expect.stringMatching(/^\[DOCUMENT_RUN\] \{"runId":"run-1",/),
+        );
       });
     });
 

@@ -29,6 +29,8 @@ import {
   ArtifactSchema,
   WorkflowRun,
   WorkflowRunSchema,
+  RunCandidateSource,
+  RunCandidateSourceSchema,
   DesignSystem,
   DesignSystemSchema,
 } from './schemas';
@@ -57,6 +59,7 @@ import {
       { name: OnboardingProfile.name, schema: OnboardingProfileSchema },
       { name: Artifact.name, schema: ArtifactSchema },
       { name: WorkflowRun.name, schema: WorkflowRunSchema },
+      { name: RunCandidateSource.name, schema: RunCandidateSourceSchema },
       { name: DesignSystem.name, schema: DesignSystemSchema },
     ]),
   ],

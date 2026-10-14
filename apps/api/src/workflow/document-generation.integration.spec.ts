@@ -39,12 +39,17 @@ import { DESIGN_SYSTEM_SEED_DIR } from '../design-system/design-system.constants
 import type { RenderFacts } from '../document-render/render-facts';
 import type { RenderSessionResult } from '../document-render/render-session';
 import type { RenderAttemptUsage } from '../document-render/render-usage.types';
+import { NotFoundException } from '@nestjs/common';
 import type {
   AcceptedCandidate,
   BuildInput,
   DocumentCheck,
+  DocumentDiagnostics,
 } from './engine/workflow.types';
-import { ArtifactRunProcessor } from './workers/artifact-run.worker.handler';
+import {
+  ArtifactRunProcessor,
+  type ArtifactRunDeps,
+} from './workers/artifact-run.worker.handler';
 
 /**
  * Test layer 3 (spec §11.2): a DOCUMENT run through the real worker
@@ -60,6 +65,8 @@ import { ArtifactRunProcessor } from './workers/artifact-run.worker.handler';
  * and reads its `candidate.html`, switches system, meets a stale contract, or
  * finds its base's Candidate Source missing.
  * Each asserts step events, `step.progress`, meter records and `failureCode`.
+ * The run's diagnostics, alert lines and completion line are asserted on the
+ * clean path, exhaustion, a checkpoint resume, and the alerting failures.
  */
 
 const readSeed = (file: string) =>
@@ -123,7 +130,8 @@ const makeJob = (overrides: Partial<Job<BuildInput>> = {}): Job<BuildInput> =>
   ({
     id: 'run-1',
     data: buildInput(),
-    attemptsMade: 1,
+    // BullMQ counts the attempts that already failed: a first attempt has 0.
+    attemptsMade: 0,
     opts: { attempts: 3 },
     ...overrides,
   }) as unknown as Job<BuildInput>;
@@ -144,6 +152,7 @@ const makeRun = () => {
     totalTokens: 10_000,
     cost: 0.09,
     model: 'test/generation-model',
+    finishReason: 'stop',
   };
   const agent = {
     generate: jest.fn(),
@@ -196,6 +205,7 @@ const makeRun = () => {
   // One run record across job attempts, so a retry reads the checkpoint the
   // failed attempt saved.
   let accepted: AcceptedCandidate | undefined;
+  let diagnostics: DocumentDiagnostics | undefined;
   const runHandle = {
     runId: 'run-1',
     saveAcceptedCandidate: jest.fn((candidate: AcceptedCandidate) => {
@@ -214,6 +224,14 @@ const makeRun = () => {
     getLatestCompletedResearch: jest.fn(),
     complete: jest.fn().mockResolvedValue(undefined),
     fail: jest.fn().mockResolvedValue(undefined),
+    readDocumentDiagnostics: jest.fn(() => Promise.resolve(diagnostics)),
+    saveDocumentDiagnostics: jest.fn<
+      Promise<void>,
+      [DocumentDiagnostics, string?]
+    >((saved) => {
+      diagnostics = saved;
+      return Promise.resolve();
+    }),
   };
   const creditMeter = {
     assertBalance: jest.fn().mockResolvedValue(undefined),
@@ -223,7 +241,7 @@ const makeRun = () => {
     debit: jest.fn().mockResolvedValue(undefined),
   };
 
-  const processor = new ArtifactRunProcessor({
+  const deps: ArtifactRunDeps = {
     agent: agent as never,
     artifacts: artifacts as never,
     designSystems: designSystems as never,
@@ -234,10 +252,12 @@ const makeRun = () => {
     runs: { handleFor: jest.fn().mockReturnValue(runHandle) } as never,
     redis: redis as never,
     logger,
-  });
+  };
+  const processor = new ArtifactRunProcessor(deps);
 
   return {
     processor,
+    deps,
     logger,
     redis,
     agent,
@@ -297,6 +317,44 @@ const runJob = async (run: Run, job = makeJob()): Promise<unknown> => {
 
 const failedWith = (run: Run) =>
   emitted(run).find((e) => e.type === 'run.failed')?.data;
+
+const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+
+/** The diagnostics the run ended with, and the failed candidate's text. */
+const savedDiagnostics = ({ runHandle }: Run) => {
+  const calls = runHandle.saveDocumentDiagnostics.mock.calls;
+  expect(calls.length).toBeGreaterThan(0);
+  const [diagnostics, failedCandidate] = calls[calls.length - 1];
+  return { diagnostics, failedCandidate };
+};
+
+const loggedLines = ({ logger }: Run): string[] =>
+  (['log', 'warn', 'error'] as const).flatMap((level) =>
+    (logger[level] as unknown as jest.Mock).mock.calls.map((call: unknown[]) =>
+      call.map(String).join(' '),
+    ),
+  );
+
+const completionLines = (run: Run): Record<string, unknown>[] =>
+  loggedLines(run)
+    .filter((line) => line.startsWith('[DOCUMENT_RUN] '))
+    .map(
+      (line) =>
+        JSON.parse(line.slice('[DOCUMENT_RUN] '.length)) as Record<
+          string,
+          unknown
+        >,
+    );
+
+/** Text that must only ever live on the run record (spec §11.6). */
+const expectNothingPrivateLogged = (run: Run, ...sources: string[]) => {
+  const prompt = buildInput().prompt;
+  for (const line of loggedLines(run)) {
+    expect(line).not.toContain(prompt);
+    expect(line).not.toContain('<section');
+    for (const source of sources) expect(line).not.toContain(source);
+  }
+};
 
 let run: Run;
 
@@ -955,7 +1013,9 @@ describe('DOCUMENT generation, end to end', () => {
 
     expect(failedWith(run)).toMatchObject({ code: 'internal' });
     expect(run.logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('[ALERT render.egress]'),
+      expect.stringMatching(
+        /^\[ALERT render\.egress\] run=run-1 artifact=artifact-1 version=\d+/,
+      ),
     );
     expect(run.runHandle.recordRenderAttempt).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'EGRESS', billed: false }),
@@ -1124,7 +1184,9 @@ describe('DOCUMENT generation, end to end', () => {
         code: 'artifact.source_missing',
       });
       expect(run.logger.error).toHaveBeenCalledWith(
-        expect.stringContaining('[ALERT artifact.source_missing]'),
+        expect.stringMatching(
+          /^\[ALERT artifact\.source_missing\] run=run-1 artifact=artifact-1 version=\d+/,
+        ),
       );
       expect(run.artifacts.failVersion).toHaveBeenCalledWith(
         'artifact-1',
@@ -1143,6 +1205,333 @@ describe('DOCUMENT generation, end to end', () => {
 
       expect(error).toMatchObject({ retryable: true });
       expect(run.artifacts.failVersion).not.toHaveBeenCalled();
+    });
+  });
+  describe('run diagnostics', () => {
+    it('should record every check, the model output, pages, sessions and step times on a READY run', async () => {
+      await runJob(run);
+
+      const { diagnostics, failedCandidate } = savedDiagnostics(run);
+      expect(diagnostics).toMatchObject({
+        jobAttempt: 1,
+        pin: { id: 'margin', version: margin.version },
+        outcome: 'READY',
+        candidates: [
+          {
+            candidateSha256: sha(MARGIN_SAMPLE),
+            checks: [
+              { phase: 'static', passed: true, violations: [] },
+              { phase: 'render', passed: true, violations: [] },
+            ],
+          },
+        ],
+        repairRounds: 0,
+        finishReason: 'stop',
+        outputTokens: 6000,
+        pageCount: 5,
+        renderAttempts: { sessions: 1 },
+        acceptedCandidate: {
+          candidateSha256: sha(MARGIN_SAMPLE),
+          repairsSpent: 0,
+        },
+        credits: 188,
+      });
+      expect(Object.keys(diagnostics.stepWallTimeMs).sort()).toEqual([
+        'GENERATE',
+        'PERSIST_VERSION',
+        'RENDER_PDF',
+        'RESOLVE_INPUT',
+      ]);
+      expect(diagnostics).not.toHaveProperty('failureCode');
+      expect(diagnostics).not.toHaveProperty('failedCandidate');
+      expect(failedCandidate).toBeUndefined();
+    });
+
+    it('should log one completion line with the run summary and nothing private on a READY run', async () => {
+      await runJob(run);
+
+      expect(completionLines(run)).toEqual([
+        {
+          runId: 'run-1',
+          artifactId: 'artifact-1',
+          version: 1,
+          pin: `margin@${margin.version}`,
+          outcome: 'READY',
+          failureCode: null,
+          repairRounds: 0,
+          renderSessions: 1,
+          wallTimeMs: expect.any(Number),
+          credits: 188,
+        },
+      ]);
+      expectNothingPrivateLogged(run, MARGIN_SAMPLE);
+    });
+
+    describe('when static findings outlast the Repair budget', () => {
+      beforeEach(() => {
+        const draft = run.agent.generateDocument.getMockImplementation()!;
+        run.agent.generateDocument.mockImplementation(async (input, hooks) => ({
+          ...(await draft(input, hooks)),
+          html: OFF_SCALE,
+        }));
+        const repair = run.agent.repairDocument.getMockImplementation()!;
+        run.agent.repairDocument.mockImplementation(async (input, hooks) => ({
+          ...(await repair(input, hooks)),
+          html: OFF_SCALE,
+        }));
+      });
+
+      it('should record the failing checks, the failureCode and the failed candidate', async () => {
+        await runJob(run);
+
+        const { diagnostics, failedCandidate } = savedDiagnostics(run);
+        const failing = {
+          phase: 'static',
+          passed: false,
+          violations: [{ code: 'typography.rules.minPx', count: 1 }],
+        };
+        expect(diagnostics).toMatchObject({
+          outcome: 'FAILED',
+          failureCode: 'document.repair_exhausted',
+          candidates: [
+            {
+              candidateSha256: sha(OFF_SCALE),
+              checks: [failing, failing, failing],
+            },
+          ],
+          repairRounds: 2,
+          outputTokens: 18_000,
+          renderAttempts: { sessions: 0 },
+          failedCandidate: { candidateSha256: sha(OFF_SCALE) },
+          credits: 540,
+        });
+        expect(diagnostics).not.toHaveProperty('pageCount');
+        expect(diagnostics).not.toHaveProperty('acceptedCandidate');
+        expect(Object.keys(diagnostics.stepWallTimeMs).sort()).toEqual([
+          'GENERATE',
+          'RESOLVE_INPUT',
+        ]);
+        expect(failedCandidate).toBe(OFF_SCALE);
+      });
+
+      it('should log one completion line with the failureCode, and no source, brief or violation detail', async () => {
+        await runJob(run);
+
+        expect(completionLines(run)).toEqual([
+          expect.objectContaining({
+            outcome: 'FAILED',
+            failureCode: 'document.repair_exhausted',
+            repairRounds: 2,
+            renderSessions: 0,
+            credits: 540,
+          }),
+        ]);
+        expectNothingPrivateLogged(run, OFF_SCALE, 'font-size: 13px');
+      });
+    });
+
+    describe('when a render outage outlasts the in-step retry', () => {
+      const timedOut = () =>
+        session(
+          { ...recorded('margin-sample'), timedOut: true },
+          { pdf: null },
+        );
+      const timeout = {
+        phase: 'render',
+        passed: false,
+        violations: [{ code: 'render.timeout', count: 1 }],
+      };
+
+      beforeEach(() => {
+        run.renderer.render.mockResolvedValue(timedOut());
+      });
+
+      it('should save the retried job attempt as RETRYING, with its error text, and log no completion line', async () => {
+        await runJob(run);
+
+        const { diagnostics, failedCandidate } = savedDiagnostics(run);
+        expect(diagnostics).toMatchObject({
+          jobAttempt: 1,
+          outcome: 'RETRYING',
+          jobAttemptFailures: [
+            {
+              jobAttempt: 1,
+              failureCode: 'render.unavailable',
+              message: expect.stringContaining('did not settle'),
+            },
+          ],
+          renderAttempts: { sessions: 2 },
+        });
+        expect(diagnostics).not.toHaveProperty('failureCode');
+        expect(failedCandidate).toBeUndefined();
+        expect(completionLines(run)).toEqual([]);
+        expect(loggedLines(run).join('\n')).not.toContain('did not settle');
+      });
+
+      it('should describe every job attempt when a job retry resumes from the checkpoint', async () => {
+        await runJob(run);
+        run.renderer.render.mockResolvedValue(
+          session(recorded('margin-sample')),
+        );
+        await runJob(run, makeJob({ attemptsMade: 1 }));
+
+        const { diagnostics } = savedDiagnostics(run);
+        expect(diagnostics).toMatchObject({
+          jobAttempt: 2,
+          outcome: 'READY',
+          jobAttemptFailures: [
+            { jobAttempt: 1, failureCode: 'render.unavailable' },
+          ],
+          candidates: [
+            {
+              candidateSha256: sha(MARGIN_SAMPLE),
+              checks: [
+                { phase: 'static', passed: true, violations: [] },
+                timeout,
+                timeout,
+                { phase: 'render', passed: true, violations: [] },
+              ],
+            },
+          ],
+          finishReason: 'stop',
+          outputTokens: 6000,
+          renderAttempts: { sessions: 3 },
+          acceptedCandidate: {
+            candidateSha256: sha(MARGIN_SAMPLE),
+            repairsSpent: 0,
+          },
+          credits: 8,
+        });
+        expect(completionLines(run)).toEqual([
+          expect.objectContaining({ outcome: 'READY', renderSessions: 3 }),
+        ]);
+      });
+
+      it('should fail with the checkpoint as the failed candidate when every session of the resumed job attempt errors', async () => {
+        await runJob(run);
+        run.renderer.render.mockRejectedValue(new Error('socket hang up'));
+        await runJob(run, makeJob({ attemptsMade: 3 }));
+
+        const { diagnostics, failedCandidate } = savedDiagnostics(run);
+        expect(diagnostics).toMatchObject({
+          outcome: 'FAILED',
+          failureCode: 'render.unavailable',
+          failedCandidate: { candidateSha256: sha(MARGIN_SAMPLE) },
+        });
+        expect(failedCandidate).toBe(MARGIN_SAMPLE);
+      });
+
+      it('should describe a job attempt that ran in another process from what the run recorded', async () => {
+        await runJob(run);
+        // A stalled job: the process that ran it is gone, and another one's
+        // processor is told it failed for good.
+        const elsewhere = new ArtifactRunProcessor(run.deps);
+
+        await elsewhere.onFailed(
+          makeJob({ attemptsMade: 3 }),
+          new Error('job stalled more than allowable limit'),
+        );
+
+        const { diagnostics, failedCandidate } = savedDiagnostics(run);
+        expect(diagnostics).toMatchObject({
+          jobAttempt: 3,
+          outcome: 'FAILED',
+          failureCode: 'internal',
+          jobAttemptFailures: [
+            { jobAttempt: 1, failureCode: 'render.unavailable' },
+            { jobAttempt: 3, failureCode: 'internal' },
+          ],
+          outputTokens: 6000,
+          renderAttempts: { sessions: 2 },
+          failedCandidate: { candidateSha256: sha(MARGIN_SAMPLE) },
+          credits: 0,
+        });
+        expect(failedCandidate).toBe(MARGIN_SAMPLE);
+        expect(completionLines(run)).toHaveLength(1);
+      });
+    });
+
+    it('should record the code the run stores, internal, when the artifact was deleted mid-run', async () => {
+      // The run fails as repair_exhausted, but the user deleted the artifact
+      // first, so the run is failed as internal.
+      run.agent.generateDocument.mockResolvedValue({
+        title: 'Three fixes',
+        commentary: 'Swipe through.',
+        html: OFF_SCALE,
+        envelopeRepairs: 0,
+      });
+      run.agent.repairDocument.mockResolvedValue({
+        html: OFF_SCALE,
+        envelopeRepairs: 0,
+      });
+      run.artifacts.failVersion.mockResolvedValue('ARTIFACT_DELETED');
+
+      await runJob(run);
+
+      expect(run.runHandle.fail).toHaveBeenCalledWith(
+        'internal',
+        expect.any(String),
+      );
+      expect(savedDiagnostics(run).diagnostics).toMatchObject({
+        outcome: 'FAILED',
+        failureCode: 'internal',
+      });
+      expect(completionLines(run)).toEqual([
+        expect.objectContaining({ failureCode: 'internal' }),
+      ]);
+    });
+
+    it('should record a run that failed before any check, with no failed candidate', async () => {
+      run.designSystems.resolve.mockRejectedValue(
+        new NotFoundException('Design System margin v1 not found'),
+      );
+
+      await runJob(run);
+
+      const { diagnostics, failedCandidate } = savedDiagnostics(run);
+      expect(diagnostics).toMatchObject({
+        outcome: 'FAILED',
+        failureCode: 'design_system.unavailable',
+        candidates: [],
+        repairRounds: 0,
+      });
+      expect(failedCandidate).toBeUndefined();
+      expect(completionLines(run)).toHaveLength(1);
+    });
+
+    it('should still log the completion line when saving the diagnostics fails', async () => {
+      run.runHandle.saveDocumentDiagnostics.mockRejectedValue(
+        new Error('mongo down'),
+      );
+
+      await expect(runJob(run)).resolves.toBeUndefined();
+
+      expect(completionLines(run)).toHaveLength(1);
+      expect(run.artifacts.promoteVersion).toHaveBeenCalled();
+    });
+  });
+
+  describe('alerts', () => {
+    it('should alert design_system.unresolvable with the run when the pin does not resolve', async () => {
+      run.designSystems.resolve.mockRejectedValue(
+        new NotFoundException('Design System margin v1 not found'),
+      );
+
+      await runJob(run);
+
+      expect(run.logger.error).toHaveBeenCalledWith(
+        `[ALERT design_system.unresolvable] run=run-1 artifact=artifact-1 version=1 pin=margin@${margin.version}`,
+      );
+    });
+
+    it('should alert credit.commit_failed with the run when settling a READY run fails', async () => {
+      run.creditMeter.debit.mockRejectedValue(new Error('mongo down'));
+
+      await expect(runJob(run)).resolves.toBeUndefined();
+
+      expect(run.logger.error).toHaveBeenCalledWith(
+        '[ALERT credit.commit_failed] run=run-1 artifact=artifact-1 version=1 credits=188',
+      );
     });
   });
 });

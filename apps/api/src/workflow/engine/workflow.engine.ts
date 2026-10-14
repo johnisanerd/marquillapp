@@ -73,6 +73,7 @@ export async function runWorkflow(
     }
 
     await ctx.run.setCurrentStep(step);
+    ctx.diagnostics.stepStarted(step);
     emitter.emit({
       type: RunEventType.STEP_STARTED,
       data: { step, index, total },
@@ -87,6 +88,7 @@ export async function runWorkflow(
 
     // Steps write only their own slots, so the merge can be shallow.
     state = { ...state, ...patch };
+    ctx.diagnostics.stepCompleted(step);
     emitter.emit({
       type: RunEventType.STEP_COMPLETED,
       data: { step, index, total },
@@ -179,13 +181,15 @@ export const ARTIFACT_DELETED_FAILURE_REASON =
  * write is isolated: this is the last line of defence, and one broken write must
  * not strand the run in `RUNNING` or deny the client its `run.failed`.
  *
- * An artifact the user deleted mid-run fails its run silently: the client that
- * deleted it is not waiting for the result.
+ * An artifact the user deleted mid-run fails its run silently, as `internal`:
+ * the client that deleted it is not waiting for the result.
+ *
+ * Returns the code the run was failed with.
  */
 export async function handleTerminalFailure(
   { artifacts, run, emitter, logger }: TerminalFailureDeps,
   { artifactId, version, failureCode, failureReason }: TerminalFailure,
-): Promise<void> {
+): Promise<FailureCode> {
   const report = (what: string, error: unknown): void =>
     logger.error(
       `Terminal-failure handler could not ${what} for artifact ${artifactId} v${version}: ${describeError(error)}`,
@@ -223,4 +227,5 @@ export async function handleTerminalFailure(
     });
   }
   await emitter.flush();
+  return deleted ? FailureCode.INTERNAL : failureCode;
 }

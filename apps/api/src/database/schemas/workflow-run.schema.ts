@@ -10,8 +10,14 @@ import type {
   AcceptedCandidate,
   BuildInput,
   DocumentCheck,
+  DocumentDiagnostics,
 } from '../../workflow/engine/workflow.types';
 import { FailureCode, WorkflowStep } from '../../workflow/workflow.constants';
+
+/** The checkpoint as the run keeps it: the hash, not the text. */
+export type StoredAcceptedCandidate = Omit<AcceptedCandidate, 'candidate'> & {
+  candidateSha256: string;
+};
 
 export enum RunKind {
   INITIAL = 'INITIAL',
@@ -76,9 +82,14 @@ export class WorkflowRun extends Document {
 
   // DOCUMENT only: the job's one checkpoint, the latest statically clean
   // Candidate Source RENDER_PDF was about to render. A job retry resumes from
-  // it instead of calling the model again.
+  // it instead of calling the model again. Its text lives, and expires, in
+  // `run_candidate_sources`.
   @Prop({ type: Object })
-  acceptedCandidate?: AcceptedCandidate;
+  acceptedCandidate?: StoredAcceptedCandidate;
+
+  // DOCUMENT only: what the run did, written when it ends (spec §11.1).
+  @Prop({ type: Object })
+  documentDiagnostics?: DocumentDiagnostics;
 
   // Attempt-scoped: reset at the start of each attempt so a whole-job retry
   // cannot double-count. Only the winning attempt's total is ever debited.

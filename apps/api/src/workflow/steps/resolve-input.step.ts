@@ -5,6 +5,7 @@ import { SUPPORTED_CONTRACT } from '../../design-system/design-system.constants'
 import { renderPromptFragment } from '../../design-system/prompt-fragment';
 import { sha256Hex } from '../../document-source/sha256';
 import { FailureCode } from '../workflow.constants';
+import { alert, alertSubject } from '../engine/alert';
 import { terminal, transient } from '../engine/workflow.error';
 import type {
   ResolvedDesignSystem,
@@ -118,7 +119,12 @@ async function readBaseCandidate(
     const problem =
       body === null ? 'is missing' : 'does not match its candidateSha256';
     const reason = `The base Candidate Source ${candidateKey} of artifact ${artifactId} v${version} ${problem}`;
-    ctx.logger.error(`[ALERT artifact.source_missing] ${reason}`);
+    alert(
+      ctx.logger,
+      'artifact.source_missing',
+      alertSubject(ctx.run.runId, state.input),
+      { key: candidateKey, cause: body === null ? 'missing' : 'sha256' },
+    );
     throw terminal(reason, undefined, FailureCode.ARTIFACT_SOURCE_MISSING);
   }
   return body.toString('utf8');
@@ -154,8 +160,11 @@ async function resolveDesignSystem(
     record = await ctx.designSystems.resolve(pin.id, pin.version);
   } catch (error: unknown) {
     if (error instanceof NotFoundException) {
-      ctx.logger.error(
-        `[ALERT design_system.unresolvable] artifact ${artifactId} v${version} is pinned to ${pin.id} v${pin.version}, which does not resolve`,
+      alert(
+        ctx.logger,
+        'design_system.unresolvable',
+        alertSubject(ctx.run.runId, state.input),
+        { pin: `${pin.id}@${pin.version}` },
       );
       throw terminal(
         error.message,

@@ -8,7 +8,7 @@
  * without loading parse5.
  */
 export class IconInliningError extends Error {
-  readonly alertTag = 'icon.inline_failed';
+  readonly alertTag = 'icon.inline_failed' as const;
 
   constructor(message: string) {
     super(message);

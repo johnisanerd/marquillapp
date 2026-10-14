@@ -136,6 +136,8 @@ export interface ArtifactGenerationResult {
 // the model to fill `UsageDetail`, and Layer 1's `Usage` does not carry it.
 export interface AgentTurnUsage extends Usage {
   model: string;
+  /** Why the turn stopped (`stop`, `length`, ...), when the provider said. */
+  finishReason?: string;
 }
 
 /**
