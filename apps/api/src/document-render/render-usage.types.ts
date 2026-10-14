@@ -17,17 +17,14 @@ export interface BrowserlessUsage {
  * - `cover` — the `cover.png` capture.
  * - `pdf` — `page.pdf` and the page count.
  */
-export const RENDER_PHASES = [
-  'connect',
-  'setup',
-  'load',
-  'probe',
-  'fontPass',
-  'cover',
-  'pdf',
-] as const;
-
-export type RenderPhase = (typeof RENDER_PHASES)[number];
+export type RenderPhase =
+  | 'connect'
+  | 'setup'
+  | 'load'
+  | 'probe'
+  | 'fontPass'
+  | 'cover'
+  | 'pdf';
 
 /**
  * Where a session got to and how long each phase took (§11.1). `phase` is the
@@ -66,7 +63,7 @@ export interface RenderAttemptUsage
   outcome: RenderSessionOutcome;
   billed: boolean;
   /** Set when the session hit its deadline; `phase` is then where it hung. */
-  timedOut?: true;
+  timedOut?: boolean;
   /** Why `cover.png` is missing, when the capture or its upload failed. */
   coverFailure?: string;
 }

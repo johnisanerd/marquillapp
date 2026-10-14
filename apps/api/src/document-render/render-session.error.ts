@@ -17,7 +17,10 @@ export class RenderSessionError extends Error {
     readonly usage: BrowserlessUsage,
     options?: { cause?: unknown; trace?: RenderTrace },
   ) {
-    super(message, { cause: options?.cause });
+    super(
+      message,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
     this.trace = options?.trace;
     this.name = 'RenderSessionError';
   }

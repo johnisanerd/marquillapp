@@ -754,8 +754,9 @@ Each DOCUMENT run records a **`documentDiagnostics`** block on `WorkflowRun`:
   ended: `pdf` for a session that finished, the phase that hung or threw otherwise) and `phaseMs`
   (milliseconds per phase entered, the last one up to the moment the session ended), and
   `timedOut: true` when the session hit its deadline. The phases are those of §5.1. Entries from
-  before #192 carry none of these. The Browserless session id is not recorded: `puppeteer-core`
-  does not expose it.
+  before #192 carry none of these. The Browserless session id is not recorded: a plain
+  `puppeteer.connect` gets none from Browserless (its docs return an id only from the session API,
+  `POST /session`), so a `connect` timeout cannot yet be matched to a Browserless-side session.
 - `acceptedCandidate` (§7.3) and, on failure, the failed Candidate Source
 
 ### 11.2 Test layers (#141)

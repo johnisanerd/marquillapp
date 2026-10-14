@@ -292,10 +292,10 @@ function attemptOf({
 function logTimeout(
   ctx: StepContext,
   session: number,
-  trace: RenderTrace | undefined,
+  { phase, phaseMs }: RenderTrace,
 ): void {
   ctx.logger.warn(
-    `render.timeout run=${ctx.run.runId} session=${session} phase=${trace?.phase ?? 'unknown'} phaseMs=${JSON.stringify(trace?.phaseMs ?? {})}`,
+    `render.timeout run=${ctx.run.runId} session=${session} phase=${phase} phaseMs=${JSON.stringify(phaseMs)}`,
   );
 }
 
