@@ -28,10 +28,20 @@ export class DocumentMetricsService {
     private readonly workflowRunModel: Model<WorkflowRun>,
   ) {}
 
-  async aggregate({
-    since,
-    runIds,
-  }: DocumentMetricsQuery = {}): Promise<DocumentMetrics> {
+  async aggregate(query: DocumentMetricsQuery = {}): Promise<DocumentMetrics> {
+    return computeDocumentMetrics(
+      await this.listRuns(query),
+      query.since ?? null,
+    );
+  }
+
+  /**
+   * The matched runs, one row each, for callers that gate on single runs
+   * (the slowest, the costliest at a page count) rather than on aggregates.
+   */
+  async listRuns({ since, runIds }: DocumentMetricsQuery = {}): Promise<
+    DocumentRunRow[]
+  > {
     const pipeline: PipelineStage[] = [
       {
         $match: {
@@ -49,6 +59,7 @@ export class DocumentMetricsService {
         // the violation details or any text.
         $project: {
           _id: 0,
+          runId: { $toString: '$_id' },
           designSystemId: '$documentDiagnostics.pin.id',
           outcome: '$documentDiagnostics.outcome',
           failureCode: '$documentDiagnostics.failureCode',
@@ -63,6 +74,7 @@ export class DocumentMetricsService {
           repairRounds: '$documentDiagnostics.repairRounds',
           wallTimeMs: '$documentDiagnostics.wallTimeMs',
           credits: '$documentDiagnostics.credits',
+          pageCount: '$documentDiagnostics.pageCount',
           renderAttempts: {
             $map: {
               input: '$renderAttempts',
@@ -77,9 +89,6 @@ export class DocumentMetricsService {
         },
       },
     ];
-    const rows = await this.workflowRunModel
-      .aggregate<DocumentRunRow>(pipeline)
-      .exec();
-    return computeDocumentMetrics(rows, since ?? null);
+    return this.workflowRunModel.aggregate<DocumentRunRow>(pipeline).exec();
   }
 }

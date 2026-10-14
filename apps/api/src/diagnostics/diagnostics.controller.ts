@@ -3,7 +3,7 @@ import { getHeapSnapshot } from 'v8';
 import type { Response } from 'express';
 import { AdminTokenGuard } from './admin-token.guard';
 import { DocumentMetrics } from './document-metrics';
-import { DocumentMetricsQueryDto } from './document-metrics-query.dto';
+import { DocumentMetricsQueryDto } from './dto';
 import { DocumentMetricsService } from './document-metrics.service';
 
 /** How far back `GET /diagnostics/documents` looks when `since` is absent. */

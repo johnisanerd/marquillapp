@@ -46,6 +46,23 @@ describe('DocumentMetricsService', () => {
     return pipeline[0].$match;
   };
 
+  describe('listRuns', () => {
+    it('should return the projected rows, one per run, with the run id and page count', async () => {
+      mocks.exec.mockResolvedValue([fixtures.row]);
+
+      await expect(service.listRuns()).resolves.toEqual([fixtures.row]);
+
+      const [pipeline] = mocks.workflowRunModel.aggregate.mock.calls[0] as [
+        { $project: Record<string, unknown> }[],
+      ];
+      expect(pipeline[1].$project).toMatchObject({
+        runId: { $toString: '$_id' },
+        pageCount: '$documentDiagnostics.pageCount',
+        credits: '$documentDiagnostics.credits',
+      });
+    });
+  });
+
   describe('aggregate', () => {
     it('should compute metrics over the rows the aggregation returns', async () => {
       mocks.exec.mockResolvedValue([fixtures.row]);

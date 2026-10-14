@@ -1,5 +1,11 @@
 import type { RenderSessionOutcome } from '../document-render/render-usage.types';
-import type { CandidateDiagnostics } from '../workflow/engine/workflow.types';
+import type {
+  CandidateDiagnostics,
+  CheckOutcome,
+  DocumentCheck,
+  DocumentDiagnostics,
+} from '../workflow/engine/workflow.types';
+import { remedyOf } from '../document-render/render-remedy';
 import { FailureCode } from '../workflow/workflow.constants';
 
 /**
@@ -8,16 +14,20 @@ import { FailureCode } from '../workflow/workflow.constants';
  * `renderAttempts`; tests and other callers can build it directly.
  */
 export interface DocumentRunRow {
+  /** The run's id, so a caller can tell which run a figure belongs to. */
+  runId?: string;
   /** The pinned Design System's id; absent only for a run that carried no pin. */
   designSystemId?: string;
-  outcome: 'READY' | 'FAILED';
+  outcome: Exclude<DocumentDiagnostics['outcome'], 'RETRYING'>;
   failureCode?: FailureCode;
   /** Every job attempt's code, so a truncation that a retry absorbed counts. */
   jobAttemptFailureCodes: FailureCode[];
   candidates: CandidateDiagnostics[];
   repairRounds: number;
   wallTimeMs: number;
+  /** What the latest job attempt metered; it is charged only when `READY`. */
   credits: number;
+  pageCount?: number;
   renderAttempts: {
     outcome: RenderSessionOutcome;
     billed: boolean;
@@ -28,12 +38,14 @@ export interface DocumentRunRow {
 export interface Percentiles {
   p50: number | null;
   p95: number | null;
+  /** The largest value, for gates on the slowest or costliest run. */
+  max: number | null;
 }
 
 /** A violation code and how often it showed up. */
 export interface ViolationTally {
   code: string;
-  /** Checks that failed with this code: the share of Repairs it caused. */
+  /** Checks that sent a candidate to Repair with this code. */
   checks: number;
   /** Violations with this code, summed over those checks. */
   count: number;
@@ -48,8 +60,10 @@ export interface DocumentMetricsBucket {
   /** FAILED runs per final `failureCode`. */
   failures: Partial<Record<FailureCode, number>>;
   /**
-   * Runs whose first Candidate Source passed every check it went through,
-   * the render check included, out of runs that produced a candidate.
+   * Runs whose first Candidate Source needed no Repair and rendered cleanly,
+   * out of runs whose first Candidate Source reached a verdict: it was
+   * repaired, or it passed a render. A run that stopped on a render outage
+   * says nothing about its candidate and is left out.
    */
   firstCandidate: { runs: number; passed: number; passRate: number | null };
   /** Runs per Repair rounds spent (`"0"`, `"1"`, ...). */
@@ -58,6 +72,8 @@ export interface DocumentMetricsBucket {
   violations: { static: ViolationTally[]; render: ViolationTally[] };
   /** Runs where any job attempt failed with `document.truncated`. */
   truncations: number;
+  /** `truncations / runs`; null when there are no runs. */
+  truncationRate: number | null;
   renderSessions: {
     total: number;
     /** Sessions per run; null when there are no runs. */
@@ -69,6 +85,7 @@ export interface DocumentMetricsBucket {
     absorbedUnits: number;
   };
   wallTimeMs: Percentiles;
+  /** Over `READY` runs: a failed run's credits are metered, never charged. */
   credits: Percentiles;
 }
 
@@ -102,6 +119,9 @@ export function computeDocumentMetrics(
 
 function bucketOf(rows: DocumentRunRow[]): DocumentMetricsBucket {
   const ready = rows.filter((row) => row.outcome === 'READY').length;
+  const truncations = rows.filter((row) =>
+    row.jobAttemptFailureCodes.includes(FailureCode.DOCUMENT_TRUNCATED),
+  ).length;
   const failures: Partial<Record<FailureCode, number>> = {};
   for (const row of rows) {
     if (row.outcome === 'READY' || !row.failureCode) continue;
@@ -118,25 +138,50 @@ function bucketOf(rows: DocumentRunRow[]): DocumentMetricsBucket {
       static: topViolations(rows, 'static'),
       render: topViolations(rows, 'render'),
     },
-    truncations: rows.filter((row) =>
-      row.jobAttemptFailureCodes.includes(FailureCode.DOCUMENT_TRUNCATED),
-    ).length,
+    truncations,
+    truncationRate: rate(truncations, rows.length),
     renderSessions: renderSessionsOf(rows),
     wallTimeMs: percentiles(rows.map((row) => row.wallTimeMs)),
-    credits: percentiles(rows.map((row) => row.credits)),
+    credits: percentiles(
+      rows.filter((row) => row.outcome === 'READY').map((row) => row.credits),
+    ),
   };
 }
 
 function firstCandidateOf(
   rows: DocumentRunRow[],
 ): DocumentMetricsBucket['firstCandidate'] {
-  const first = rows.flatMap((row) => row.candidates.slice(0, 1));
-  const passed = first.filter(
-    (candidate) =>
-      candidate.checks.some(({ phase }) => phase === 'render') &&
-      candidate.checks.every(({ passed }) => passed),
-  ).length;
-  return { runs: first.length, passed, passRate: rate(passed, first.length) };
+  const verdicts = rows
+    .flatMap((row) => row.candidates.slice(0, 1))
+    .map(({ checks }) => ({
+      repaired: checks.some(neededRepair),
+      rendered: checks.some(
+        ({ phase, passed }) => phase === 'render' && passed,
+      ),
+    }))
+    .filter(({ repaired, rendered }) => repaired || rendered);
+  const passed = verdicts.filter(({ repaired }) => !repaired).length;
+  return {
+    runs: verdicts.length,
+    passed,
+    passRate: rate(passed, verdicts.length),
+  };
+}
+
+/**
+ * Whether a check sent its candidate to Repair. A `retry` finding renders
+ * again and a `defect` ends the run: neither spends a Repair (spec §7.3), so
+ * neither counts against the candidate (the same strongest-remedy rule as
+ * the render step's session outcome).
+ */
+function neededRepair({ passed, violations }: CheckOutcome): boolean {
+  if (passed) return false;
+  const remedies = violations.map(({ code }) => remedyOf(code));
+  return (
+    !remedies.includes('defect') &&
+    !remedies.includes('retry') &&
+    remedies.includes('repair')
+  );
 }
 
 function repairRoundsOf(rows: DocumentRunRow[]): Record<string, number> {
@@ -151,13 +196,13 @@ function repairRoundsOf(rows: DocumentRunRow[]): Record<string, number> {
 
 function topViolations(
   rows: DocumentRunRow[],
-  phase: 'static' | 'render',
+  phase: DocumentCheck['phase'],
 ): ViolationTally[] {
   const tallies = new Map<string, ViolationTally>();
   for (const { candidates } of rows) {
     for (const { checks } of candidates) {
       for (const check of checks) {
-        if (check.phase !== phase) continue;
+        if (check.phase !== phase || !neededRepair(check)) continue;
         for (const { code, count } of check.violations) {
           const tally = tallies.get(code) ?? { code, checks: 0, count: 0 };
           tally.checks += 1;
@@ -201,10 +246,10 @@ function renderSessionsOf(
  * function. The read is one small row per run, and a week holds hundreds.
  */
 function percentiles(values: number[]): Percentiles {
-  if (values.length === 0) return { p50: null, p95: null };
+  if (values.length === 0) return { p50: null, p95: null, max: null };
   const sorted = [...values].sort((a, b) => a - b);
   const at = (p: number) => sorted[Math.ceil(p * sorted.length) - 1];
-  return { p50: at(0.5), p95: at(0.95) };
+  return { p50: at(0.5), p95: at(0.95), max: at(1) };
 }
 
 function rate(part: number, whole: number): number | null {

@@ -43,6 +43,7 @@ describe('computeDocumentMetrics', () => {
         repairRounds: {},
         violations: { static: [], render: [] },
         truncations: 0,
+        truncationRate: null,
         renderSessions: {
           total: 0,
           perRun: null,
@@ -50,8 +51,8 @@ describe('computeDocumentMetrics', () => {
           billedUnits: 0,
           absorbedUnits: 0,
         },
-        wallTimeMs: { p50: null, p95: null },
-        credits: { p50: null, p95: null },
+        wallTimeMs: { p50: null, p95: null, max: null },
+        credits: { p50: null, p95: null, max: null },
       });
     });
 
@@ -147,12 +148,52 @@ describe('computeDocumentMetrics', () => {
       });
     });
 
-    it('should not pass a run whose first candidate never reached a render check', () => {
+    it('should leave out a run that stopped on a render outage before its first candidate reached a verdict', () => {
       const metrics = computeDocumentMetrics([
         run({
           outcome: 'FAILED',
           failureCode: FailureCode.RENDER_UNAVAILABLE,
-          candidates: [cand([{ phase: 'static' }])],
+          candidates: [
+            cand([
+              { phase: 'static' },
+              { phase: 'render', codes: ['render.timeout'] },
+              { phase: 'render', codes: ['render.timeout'] },
+            ]),
+          ],
+        }),
+      ]);
+
+      expect(metrics.overall.firstCandidate).toEqual({
+        runs: 0,
+        passed: 0,
+        passRate: null,
+      });
+    });
+
+    it('should pass a run whose first candidate only needed a render retry, spending no Repair', () => {
+      const metrics = computeDocumentMetrics([
+        run({
+          candidates: [
+            cand([
+              { phase: 'static' },
+              { phase: 'render', codes: ['render.fonts.failed'] },
+              { phase: 'render' },
+            ]),
+          ],
+        }),
+      ]);
+
+      expect(metrics.overall.firstCandidate).toEqual({
+        runs: 1,
+        passed: 1,
+        passRate: 1,
+      });
+    });
+
+    it('should not pass a run whose first candidate was repaired after a static failure', () => {
+      const metrics = computeDocumentMetrics([
+        run({
+          candidates: [cand([{ phase: 'static', codes: ['page.safeArea'] }])],
         }),
       ]);
 
@@ -212,6 +253,7 @@ describe('computeDocumentMetrics', () => {
       ]);
 
       expect(metrics.overall.truncations).toBe(2);
+      expect(metrics.overall.truncationRate).toBe(0.5);
     });
   });
 
@@ -258,6 +300,27 @@ describe('computeDocumentMetrics', () => {
     });
   });
 
+  describe('violations that spend no Repair', () => {
+    it('should leave retry and defect findings out of the top violation codes', () => {
+      const metrics = computeDocumentMetrics([
+        run({
+          candidates: [
+            cand([
+              { phase: 'render', codes: ['render.timeout'] },
+              { phase: 'render', codes: ['render.fonts.failed'] },
+              { phase: 'render', codes: ['render.egress'] },
+              { phase: 'render', codes: ['render.overlap'] },
+            ]),
+          ],
+        }),
+      ]);
+
+      expect(metrics.overall.violations.render).toEqual([
+        { code: 'render.overlap', checks: 1, count: 1 },
+      ]);
+    });
+  });
+
   describe('render sessions', () => {
     it('should total sessions, retries, billed units and absorbed units across runs', () => {
       const metrics = computeDocumentMetrics([
@@ -295,8 +358,12 @@ describe('computeDocumentMetrics', () => {
         ),
       );
 
-      expect(metrics.overall.wallTimeMs).toEqual({ p50: 10_000, p95: 19_000 });
-      expect(metrics.overall.credits).toEqual({ p50: 50, p95: 95 });
+      expect(metrics.overall.wallTimeMs).toEqual({
+        p50: 10_000,
+        p95: 19_000,
+        max: 20_000,
+      });
+      expect(metrics.overall.credits).toEqual({ p50: 50, p95: 95, max: 100 });
     });
 
     it('should give the only value as both percentiles when there is one run', () => {
@@ -304,8 +371,23 @@ describe('computeDocumentMetrics', () => {
         run({ wallTimeMs: 4200, credits: 7 }),
       ]);
 
-      expect(metrics.overall.wallTimeMs).toEqual({ p50: 4200, p95: 4200 });
-      expect(metrics.overall.credits).toEqual({ p50: 7, p95: 7 });
+      expect(metrics.overall.wallTimeMs).toEqual({
+        p50: 4200,
+        p95: 4200,
+        max: 4200,
+      });
+      expect(metrics.overall.credits).toEqual({ p50: 7, p95: 7, max: 7 });
+    });
+
+    it('should take credits from READY runs only, since a failed run is never charged', () => {
+      const metrics = computeDocumentMetrics([
+        run({ credits: 10 }),
+        run({ credits: 30 }),
+        run({ outcome: 'FAILED', credits: 500 }),
+      ]);
+
+      expect(metrics.overall.credits).toEqual({ p50: 10, p95: 30, max: 30 });
+      expect(metrics.overall.wallTimeMs.max).toBe(60_000);
     });
   });
 });
