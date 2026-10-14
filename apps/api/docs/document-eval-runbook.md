@@ -2,7 +2,9 @@
 
 How to run `bun run eval:documents` and record the result. The gates and the verdicts come from
 [document-generation-spec.md](document-generation-spec.md) §11.3 and §11.4; the aggregates are §11.5's.
-Issue: [#175](https://github.com/krispamB/marquillapp/issues/175).
+Issue: [#175](https://github.com/krispamB/marquillapp/issues/175). It runs in a dev environment for #175, and
+again **in production at the cutover** ([#177](https://github.com/krispamB/marquillapp/issues/177), spec §11.7
+step 4), which is the target environment's own check before the new API serves traffic.
 
 The script is agent-written and the run is human work: it spends real model and Browserless budget, and
 a person reviews the covers.
@@ -30,6 +32,19 @@ worker is consuming the queue, the runs sit `RUNNING` until `--timeout-min` and 
 The worker takes one workflow job at a time, so budget about 80 minutes in the worst case (20 runs × the 4-minute
 limit); a healthy eval takes much less.
 
+## What it writes
+
+The script is not read-only. In the environment its `MONGO_URI`, Redis and `R2_*` keys point at, it creates:
+
+- the eval **User** `eval@marquill.internal` (once; re-runs reuse it) and its one **Subscription** row;
+- `credits` **Usage** rows for that user, as the runs spend credits (the script also deletes them before each launch);
+- about 20 **DOCUMENT artifacts** with their **workflow runs**, and each run's `documentDiagnostics`;
+- **R2 objects**: the rendered pages and covers of every successful run;
+- BullMQ jobs in Redis.
+
+The artifacts, runs and diagnostics are the record that the #175 and #177 comments refer to, so they stay. The
+Subscription and the credit Usage rows are the only things to remove, with `--cleanup` (see below).
+
 ## Prerequisites
 
 1. **`apps/api/.env`** with real values for the target environment: `MONGO_URI`, Redis, `OPENROUTER_API_KEY`,
@@ -49,6 +64,28 @@ limit); a healthy eval takes much less.
    Restart it after any `seed:design-systems` run: Design Systems are cached for the life of a process.
 5. MongoDB and Redis reachable (`docker compose up -d` from the root for a local run).
 
+### Production (Railway)
+
+At the cutover the target environment is production. The order is fixed by spec §11.7: worker deployed, API
+deployed, `seed:design-systems`, `purge:template-documents`, then this eval. So the **worker must already be
+deployed and running** against production's MongoDB and Redis before you start: the script only enqueues, and
+without a consumer every run sits `RUNNING` until the timeout.
+
+Run the script as a one-off with the production API service's variables, from `apps/api` in a local checkout:
+
+```bash
+cd apps/api
+railway run --service <api service> bun run eval:documents
+```
+
+- `<api service>` is the Railway service that runs the API (see `docs/monorepo.md`, Railway: api and worker).
+  The worker service has the same variables, so either works; confirm the environment with `railway status`
+  before running, because `railway run` uses whichever environment is linked.
+- `railway run` injects the service's variables into a **local** process. If `MONGO_URI` or the Redis URL use
+  Railway's private network (`*.railway.internal`), they will not resolve from your machine; use the public
+  connection URLs for the one-off instead.
+- The script needs the source tree, so run it from a checkout of the commit that is deployed.
+
 ## Run
 
 From `apps/api`:
@@ -63,6 +100,7 @@ bun run eval:documents --concurrency 3 --timeout-min 90 --json eval-result.json
 | `--concurrency <n>` | `2` | Runs the script keeps in flight. The worker takes one workflow job at a time (BullMQ's default; `workflow.worker.ts` sets no concurrency), so extra in-flight runs wait in the queue. That wait is not in the gates: they use each run's own `wallTimeMs` from its diagnostics, which counts from when the job starts. 2 keeps the queue primed. Raise it only if you run the worker with more concurrency. |
 | `--timeout-min <m>` | `120` | One budget for the whole eval. A run still going when it ends is `TIMED_OUT`; runs not yet launched are `NOT_RUN`. Both count as failing. |
 | `--json <path>` | none | Also writes the full result (records, per-run rows, aggregates, gates, covers). |
+| `--cleanup` | off | Runs no matrix: deletes the eval user's Subscription and `credits` Usage rows and exits. Cannot be combined with the other flags. |
 
 The exit code is **non-zero when any automatic gate fails**. Progress goes to stdout as each run launches
 and ends, and run ids are printed at launch, so a crashed script can be picked up from Mongo.
@@ -84,10 +122,21 @@ So the script does both:
 - before **each launch** it deletes that one user's `credits` Usage rows. It never touches any other user, and
   a run's own credits are read from its diagnostics, which the reset does not affect.
 
-**Run it against a dev environment.** The Subscription row makes the eval user look like a paying subscriber
-to anything that counts Subscription documents; remove the user's Subscription afterwards if that matters.
+While the Subscription exists, the eval user looks like a paying subscriber to anything that counts
+Subscription documents, which matters in production. Remove it when the eval is done:
 
-The user and its runs stay in the database. Re-running the eval reuses the user.
+```bash
+bun run eval:documents --cleanup        # in production: railway run --service <api service> bun run eval:documents --cleanup
+```
+
+`--cleanup` runs no matrix and takes no other flag (`--cleanup` with `--concurrency`, `--timeout-min` or
+`--json` is rejected). It looks up only `eval@marquill.internal` and deletes that user's Subscription row(s)
+and `credits` Usage rows (every period), then prints the counts and exits 0. If that user does not exist it
+deletes nothing and says so. It never touches another user, and it keeps the eval user, its artifacts, runs
+and diagnostics. It is safe to run twice. Run it only after every run has ended: removing the Subscription
+while the worker is still starting queued runs can fail them on the credit check.
+
+The user and its runs stay in the database. Re-running the eval reuses the user and upserts the Subscription again.
 
 ## Reading the output
 
@@ -127,3 +176,5 @@ The user and its runs stay in the database. Re-running the eval reuses the user.
 6. For systems that fail, follow §11.4: ship them unlisted by adding them to `UNLISTED_DESIGN_SYSTEMS`
    (a deploy). A failing default blocks the rollout until it passes or the default changes to a system that
    passed.
+7. **Last: `bun run eval:documents --cleanup`** (in production, through `railway run` as above), and note the
+   deleted counts in the issue comment. The eval user then has no Subscription and no credit Usage.

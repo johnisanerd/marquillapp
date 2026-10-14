@@ -22,6 +22,22 @@ export interface EvalAccountStore {
   deleteCreditUsage(userId: string): Promise<void>;
 }
 
+/** What `--cleanup` needs, narrowed to the eval user's own rows. */
+export interface EvalCleanupStore {
+  findUserIdByEmail(email: string): Promise<string | undefined>;
+  /** Deletes the user's Subscription rows and returns how many. */
+  deleteSubscriptions(userId: string): Promise<number>;
+  /** Deletes the user's `credits` Usage rows, every period, and returns how many. */
+  deleteCreditUsage(userId: string): Promise<number>;
+}
+
+export interface EvalCleanupResult {
+  /** Whether the eval user exists; when false nothing was deleted. */
+  found: boolean;
+  subscriptionsDeleted: number;
+  creditUsageDeleted: number;
+}
+
 export interface EvalAccount {
   userId: string;
   /** Zeroes the eval user's credit usage, so the next launch passes the balance check. */
@@ -79,4 +95,23 @@ export function topCreditTierId(
       !top || rank(tier.credits) > rank(top.credits) ? tier : top,
     undefined,
   )?.id;
+}
+
+/**
+ * Undoes what `ensureEvalAccount` grants: removes the eval user's
+ * Subscription and `credits` Usage rows, so the account is back to its own
+ * Tier's limits. The User, its artifacts, runs and diagnostics stay, because
+ * they are the record of the eval. Only `EVAL_USER_EMAIL` is looked up, so no
+ * other user's rows can be touched.
+ */
+export async function cleanupEvalAccount(
+  store: EvalCleanupStore,
+): Promise<EvalCleanupResult> {
+  const userId = await store.findUserIdByEmail(EVAL_USER_EMAIL);
+  if (!userId) {
+    return { found: false, subscriptionsDeleted: 0, creditUsageDeleted: 0 };
+  }
+  const subscriptionsDeleted = await store.deleteSubscriptions(userId);
+  const creditUsageDeleted = await store.deleteCreditUsage(userId);
+  return { found: true, subscriptionsDeleted, creditUsageDeleted };
 }

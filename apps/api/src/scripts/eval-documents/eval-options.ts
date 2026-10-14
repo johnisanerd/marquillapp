@@ -8,6 +8,8 @@ export const DEFAULT_POLL_MS = 10_000;
 export interface EvalCliOptions extends EvalOptions {
   /** Where to write the full result as JSON. */
   jsonPath?: string;
+  /** Delete the eval user's Subscription and credit Usage instead of running the matrix. */
+  cleanup: boolean;
 }
 
 export const EVAL_USAGE = [
@@ -16,14 +18,24 @@ export const EVAL_USAGE = [
   '  --concurrency <n>   runs in flight at once (default 2)',
   '  --timeout-min <m>   minutes to wait for every run to end (default 120)',
   '  --json <path>       also write the full result as JSON',
+  "  --cleanup           instead of running, delete the eval user's Subscription and",
+  '                      credits Usage rows and exit (takes no other flag)',
 ].join('\n');
 
 /** Parses the script's flags, accepting both `--flag value` and `--flag=value`. */
 export function parseEvalArgs(argv: readonly string[]): EvalCliOptions {
   const values = new Map<string, string>();
+  let cleanup = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--') continue; // npm-style separator
     const [flag, inline] = argv[i].split(/=(.*)/s, 2);
+    if (flag === '--cleanup') {
+      if (inline !== undefined) {
+        throw new Error(`--cleanup takes no value\n\n${EVAL_USAGE}`);
+      }
+      cleanup = true;
+      continue;
+    }
     if (!['--concurrency', '--timeout-min', '--json'].includes(flag)) {
       throw new Error(`Unknown argument: ${argv[i]}\n\n${EVAL_USAGE}`);
     }
@@ -32,6 +44,11 @@ export function parseEvalArgs(argv: readonly string[]): EvalCliOptions {
       throw new Error(`${flag} needs a value\n\n${EVAL_USAGE}`);
     }
     values.set(flag, value);
+  }
+  if (cleanup && values.size > 0) {
+    throw new Error(
+      `--cleanup cannot be combined with ${[...values.keys()].join(', ')}\n\n${EVAL_USAGE}`,
+    );
   }
 
   const concurrency = Number(
@@ -49,5 +66,6 @@ export function parseEvalArgs(argv: readonly string[]): EvalCliOptions {
     timeoutMs: timeoutMin * 60 * 1000,
     pollMs: DEFAULT_POLL_MS,
     jsonPath: values.get('--json'),
+    cleanup,
   };
 }

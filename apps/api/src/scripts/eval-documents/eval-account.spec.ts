@@ -1,9 +1,11 @@
 import {
+  cleanupEvalAccount,
   ensureEvalAccount,
   topCreditTierId,
   EVAL_USER_EMAIL,
   EVAL_USER_NAME,
   type EvalAccountStore,
+  type EvalCleanupStore,
 } from './eval-account';
 
 const makeStore = (overrides: Partial<EvalAccountStore> = {}) => {
@@ -120,5 +122,45 @@ describe('topCreditTierId', () => {
 
   it('should return nothing when there are no tiers', () => {
     expect(topCreditTierId([])).toBeUndefined();
+  });
+});
+
+describe('cleanupEvalAccount', () => {
+  const makeCleanupStore = (overrides: Partial<EvalCleanupStore> = {}) => ({
+    findUserIdByEmail: jest.fn().mockResolvedValue('eval-user'),
+    deleteSubscriptions: jest.fn().mockResolvedValue(1),
+    deleteCreditUsage: jest.fn().mockResolvedValue(3),
+    ...overrides,
+  });
+
+  it('should delete the eval user subscription and credit usage and report the counts', async () => {
+    const store = makeCleanupStore();
+
+    const result = await cleanupEvalAccount(store);
+
+    expect(store.findUserIdByEmail).toHaveBeenCalledWith(EVAL_USER_EMAIL);
+    expect(store.deleteSubscriptions).toHaveBeenCalledWith('eval-user');
+    expect(store.deleteCreditUsage).toHaveBeenCalledWith('eval-user');
+    expect(result).toEqual({
+      found: true,
+      subscriptionsDeleted: 1,
+      creditUsageDeleted: 3,
+    });
+  });
+
+  it('should delete nothing when the eval user does not exist', async () => {
+    const store = makeCleanupStore({
+      findUserIdByEmail: jest.fn().mockResolvedValue(undefined),
+    });
+
+    const result = await cleanupEvalAccount(store);
+
+    expect(store.deleteSubscriptions).not.toHaveBeenCalled();
+    expect(store.deleteCreditUsage).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      found: false,
+      subscriptionsDeleted: 0,
+      creditUsageDeleted: 0,
+    });
   });
 });

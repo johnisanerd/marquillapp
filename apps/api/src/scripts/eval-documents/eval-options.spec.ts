@@ -7,6 +7,7 @@ describe('parseEvalArgs', () => {
       timeoutMs: 120 * 60 * 1000,
       pollMs: 10_000,
       jsonPath: undefined,
+      cleanup: false,
     });
   });
 
@@ -63,5 +64,23 @@ describe('parseEvalArgs', () => {
 
   it('should reject a flag with no value', () => {
     expect(() => parseEvalArgs(['--json'])).toThrow(/--json needs a value/);
+  });
+
+  describe('--cleanup', () => {
+    it('should select cleanup mode', () => {
+      expect(parseEvalArgs(['--cleanup']).cleanup).toBe(true);
+    });
+
+    it.each([
+      [['--cleanup', '--concurrency', '3']],
+      [['--timeout-min=10', '--cleanup']],
+      [['--cleanup', '--json', 'out.json']],
+    ])('should reject --cleanup combined with matrix flags %j', (argv) => {
+      expect(() => parseEvalArgs(argv)).toThrow(/--cleanup cannot be combined/);
+    });
+
+    it('should not take a value', () => {
+      expect(() => parseEvalArgs(['--cleanup=yes'])).toThrow(/--cleanup/);
+    });
   });
 });

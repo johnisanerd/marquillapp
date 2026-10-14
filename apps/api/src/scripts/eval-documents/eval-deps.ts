@@ -18,9 +18,12 @@ import { FEATURE_KEYS } from '../../feature-gating/feature-gating.constants';
 import { getSignedUrl } from '../../s3';
 import { WorkflowRunService } from '../../workflow/workflow-run.service';
 import {
+  cleanupEvalAccount,
   ensureEvalAccount,
   topCreditTierId,
   type EvalAccountStore,
+  type EvalCleanupResult,
+  type EvalCleanupStore,
 } from './eval-account';
 import { findCoverKey } from './eval-covers';
 import { createEvalGeneration } from './eval-generation';
@@ -28,6 +31,35 @@ import type { EvalDeps } from './eval-runner';
 
 /** Cover links outlive the run by a day, enough for the person reviewing them. */
 const COVER_URL_TTL_SECONDS = 24 * 60 * 60;
+
+/** Wires `--cleanup` to the real collections of a booted Nest context. */
+export async function cleanupEvalDeps(
+  app: INestApplicationContext,
+): Promise<EvalCleanupResult> {
+  const model = <T>(name: string) =>
+    app.get<Model<T>>(getModelToken(name), { strict: false });
+  const users = model<User>(User.name);
+  const usage = model<Usage>(Usage.name);
+  const subscriptions = model<Subscription>(Subscription.name);
+
+  const store: EvalCleanupStore = {
+    findUserIdByEmail: async (email) => {
+      const user = await users.findOne({ email }, { _id: 1 }).lean();
+      return user?._id.toString();
+    },
+    deleteSubscriptions: async (userId) =>
+      (await subscriptions.deleteMany({ userId: new Types.ObjectId(userId) }))
+        .deletedCount,
+    deleteCreditUsage: async (userId) =>
+      (
+        await usage.deleteMany({
+          user_id: new Types.ObjectId(userId),
+          feature: FEATURE_KEYS.CREDITS,
+        })
+      ).deletedCount,
+  };
+  return cleanupEvalAccount(store);
+}
 
 /**
  * Wires the eval to the real services of a booted Nest context. It is glue:

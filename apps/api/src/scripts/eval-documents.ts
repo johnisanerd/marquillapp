@@ -3,6 +3,7 @@
  * `apps/api`:
  *
  *   bun run eval:documents [--concurrency 2] [--timeout-min 120] [--json out.json]
+ *   bun run eval:documents --cleanup
  *
  * It launches the 20-run matrix (6 Design Systems x a 4-, 8- and 15-page
  * brief, plus a Refinement that carries the pin and one that switches system)
@@ -21,12 +22,17 @@
  * launch the script zeroes that one user's `credits` Usage, so credit gating
  * never stops the 20 runs, including the worker's own check when it starts
  * the next queued run. Research is off for every run.
+ *
+ * `--cleanup` runs nothing: it deletes that user's Subscription and `credits`
+ * Usage rows and exits. The User and its artifacts, runs and diagnostics stay.
  */
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { writeFile } from 'node:fs/promises';
 import { AppModule } from '../app.module';
+import { EVAL_USER_EMAIL } from './eval-documents/eval-account';
 import {
+  cleanupEvalDeps,
   createEvalDeps,
   formatEvalReport,
   parseEvalArgs,
@@ -39,6 +45,15 @@ async function run(): Promise<boolean> {
     logger: ['error', 'warn'],
   });
   try {
+    if (options.cleanup) {
+      const cleaned = await cleanupEvalDeps(app);
+      console.log(
+        cleaned.found
+          ? `Removed ${cleaned.subscriptionsDeleted} subscription(s) and ${cleaned.creditUsageDeleted} credits usage row(s) for ${EVAL_USER_EMAIL}.`
+          : `No user ${EVAL_USER_EMAIL}: nothing to clean up.`,
+      );
+      return true;
+    }
     const result = await runDocumentEval(await createEvalDeps(app), options);
     console.log(formatEvalReport(result));
     if (options.jsonPath) {
