@@ -5,8 +5,10 @@ jest.mock(
     S3Client: jest.fn(),
     PutObjectCommand: jest.fn(),
     DeleteObjectCommand: jest.fn(),
+    DeleteObjectsCommand: jest.fn(),
     GetObjectCommand: jest.fn(),
     HeadObjectCommand: jest.fn(),
+    ListObjectsV2Command: jest.fn(),
   }),
   { virtual: true },
 );
@@ -24,8 +26,10 @@ import {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl as awsGetSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
@@ -33,6 +37,8 @@ import {
   getFile,
   findFile,
   deleteFile,
+  deleteFiles,
+  listFiles,
   getSignedUrl,
   getSignedUploadUrl,
   headFile,
@@ -154,6 +160,149 @@ describe('S3 client', () => {
     it('should propagate errors from the S3 send call', async () => {
       mockSend.mockRejectedValueOnce(new Error('get failed'));
       await expect(getFile('some/key')).rejects.toThrow('get failed');
+    });
+  });
+
+  describe('listFiles', () => {
+    it('should send ListObjectsV2Command with the prefix and return the keys', async () => {
+      mockSend.mockResolvedValueOnce({
+        Contents: [
+          { Key: 'artifacts/a/1/document.pdf' },
+          { Key: 'artifacts/a/1/cover.png' },
+        ],
+        IsTruncated: false,
+      });
+
+      const keys = await listFiles('artifacts/a/');
+
+      expect(ListObjectsV2Command).toHaveBeenCalledWith({
+        Bucket: BUCKET,
+        Prefix: 'artifacts/a/',
+        ContinuationToken: undefined,
+      });
+      expect(keys).toEqual([
+        'artifacts/a/1/document.pdf',
+        'artifacts/a/1/cover.png',
+      ]);
+    });
+
+    it('should follow continuation tokens until the listing is complete', async () => {
+      mockSend
+        .mockResolvedValueOnce({
+          Contents: [{ Key: 'p/1' }],
+          IsTruncated: true,
+          NextContinuationToken: 'token-1',
+        })
+        .mockResolvedValueOnce({
+          Contents: [{ Key: 'p/2' }],
+          IsTruncated: false,
+        });
+
+      await expect(listFiles('p/')).resolves.toEqual(['p/1', 'p/2']);
+
+      expect(ListObjectsV2Command).toHaveBeenNthCalledWith(2, {
+        Bucket: BUCKET,
+        Prefix: 'p/',
+        ContinuationToken: 'token-1',
+      });
+    });
+
+    it('should return an empty list when nothing matches', async () => {
+      mockSend.mockResolvedValueOnce({ IsTruncated: false });
+      await expect(listFiles('none/')).resolves.toEqual([]);
+    });
+
+    it('should refuse an empty prefix, which would list the whole bucket', async () => {
+      await expect(listFiles('')).rejects.toThrow('non-empty prefix');
+      expect(mockSend).not.toHaveBeenCalled();
+    });
+
+    it('should throw with a clear message when env vars are missing', async () => {
+      delete process.env.R2_ACCOUNT_ID;
+      await expect(listFiles('p/')).rejects.toThrow(
+        'R2 storage is not configured. Missing env vars: R2_ACCOUNT_ID',
+      );
+    });
+  });
+
+  describe('deleteFiles', () => {
+    it('should return immediately without calling S3 when keys array is empty', async () => {
+      await deleteFiles([]);
+      expect(mockSend).not.toHaveBeenCalled();
+      expect(DeleteObjectsCommand).not.toHaveBeenCalled();
+    });
+
+    it('should send DeleteObjectsCommand with correct params for keys', async () => {
+      const keys = ['artifacts/a/1/document.pdf', 'artifacts/a/2/document.pdf'];
+      await deleteFiles(keys);
+
+      expect(DeleteObjectsCommand).toHaveBeenCalledWith({
+        Bucket: BUCKET,
+        Delete: {
+          Objects: [{ Key: keys[0] }, { Key: keys[1] }],
+          Quiet: true,
+        },
+      });
+      expect(mockSend).toHaveBeenCalledTimes(1);
+    });
+
+    it('should chunk into batches of 1000 when keys exceed 1000', async () => {
+      const keys = Array.from(
+        { length: 1500 },
+        (_, i) => 'artifacts/key-' + i + '.pdf',
+      );
+      await deleteFiles(keys);
+
+      expect(DeleteObjectsCommand).toHaveBeenCalledTimes(2);
+      expect(DeleteObjectsCommand).toHaveBeenNthCalledWith(1, {
+        Bucket: BUCKET,
+        Delete: {
+          Objects: keys.slice(0, 1000).map((Key) => ({ Key })),
+          Quiet: true,
+        },
+      });
+      expect(DeleteObjectsCommand).toHaveBeenNthCalledWith(2, {
+        Bucket: BUCKET,
+        Delete: {
+          Objects: keys.slice(1000).map((Key) => ({ Key })),
+          Quiet: true,
+        },
+      });
+      expect(mockSend).toHaveBeenCalledTimes(2);
+    });
+
+    it('should throw with a clear message when env vars are missing', async () => {
+      delete process.env.R2_ACCOUNT_ID;
+      await expect(deleteFiles(['some/key'])).rejects.toThrow(
+        'R2 storage is not configured. Missing env vars: R2_ACCOUNT_ID',
+      );
+    });
+
+    it('should throw when R2 reports a per-object error in a 200 response', async () => {
+      mockSend.mockResolvedValueOnce({
+        $metadata: { httpStatusCode: 200 },
+        Errors: [{ Key: 'artifacts/a/1/document.pdf', Code: 'AccessDenied' }],
+      });
+      await expect(deleteFiles(['artifacts/a/1/document.pdf'])).rejects.toThrow(
+        'R2 failed to delete 1 of 1 object(s), first "artifacts/a/1/document.pdf": AccessDenied',
+      );
+    });
+
+    it('should stop at the first batch that reports an error', async () => {
+      const keys = Array.from({ length: 1500 }, (_, i) => `k-${i}`);
+      mockSend.mockResolvedValueOnce({
+        $metadata: { httpStatusCode: 200 },
+        Errors: [{ Key: 'k-0', Code: 'InternalError' }],
+      });
+      await expect(deleteFiles(keys)).rejects.toThrow('InternalError');
+      expect(mockSend).toHaveBeenCalledTimes(1);
+    });
+
+    it('should propagate errors from the S3 send call', async () => {
+      mockSend.mockRejectedValueOnce(new Error('batch delete failed'));
+      await expect(deleteFiles(['some/key'])).rejects.toThrow(
+        'batch delete failed',
+      );
     });
   });
 
