@@ -870,8 +870,14 @@ A one-off script, **`bun run purge:template-documents`**, with `--dry-run`, run 
 - deletes every DOCUMENT artifact with any `templateId` version
 - deletes Posts referencing those artifacts unless `PUBLISHED`; `PUBLISHED` Posts are reported and
   kept, because LinkedIn already holds them
-- deletes the purged artifacts' R2 objects
+- deletes the purged artifacts' R2 objects: everything under `artifacts/{id}/`, which is where a
+  template-era version kept its one object, `{v}/document.pdf`
 - logs counts per category
+
+The script reads raw collections and collects every artifact, object key and Post before it deletes
+anything. It deletes the R2 objects, then the Posts, then the artifacts, because the artifacts are how
+a re-run finds the rest: a run that fails part way is finished by running it again. `--dry-run`
+reads Mongo and lists R2 but deletes nothing.
 
 The read paths get **no fallback** for template versions. A leftover one is a cutover error that the
 script fixes.
