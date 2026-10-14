@@ -50,6 +50,7 @@ describe('computeDocumentMetrics', () => {
           retries: 0,
           billedUnits: 0,
           absorbedUnits: 0,
+          timeoutsByPhase: {},
         },
         wallTimeMs: { p50: null, p95: null, max: null },
         credits: { p50: null, p95: null, max: null },
@@ -346,6 +347,50 @@ describe('computeDocumentMetrics', () => {
         retries: 1,
         billedUnits: 5,
         absorbedUnits: 3,
+        timeoutsByPhase: {},
+      });
+    });
+
+    it('should count the timed-out sessions by the phase they hung in', () => {
+      const metrics = computeDocumentMetrics([
+        run({
+          renderAttempts: [
+            {
+              outcome: 'RETRY',
+              billed: false,
+              units: 2,
+              timedOut: true,
+              phase: 'load',
+            },
+            {
+              outcome: 'RETRY',
+              billed: false,
+              units: 2,
+              timedOut: true,
+              phase: 'load',
+            },
+            { outcome: 'RETRY', billed: false, units: 1, phase: 'probe' },
+            { outcome: 'PASSED', billed: true, units: 1, phase: 'pdf' },
+          ],
+        }),
+        run({
+          renderAttempts: [
+            {
+              outcome: 'RETRY',
+              billed: false,
+              units: 2,
+              timedOut: true,
+              phase: 'connect',
+            },
+            { outcome: 'RETRY', billed: false, units: 2, timedOut: true },
+          ],
+        }),
+      ]);
+
+      expect(metrics.overall.renderSessions.timeoutsByPhase).toEqual({
+        load: 2,
+        connect: 1,
+        unknown: 1,
       });
     });
   });

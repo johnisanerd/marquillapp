@@ -61,6 +61,20 @@ describe('DocumentMetricsService', () => {
         credits: '$documentDiagnostics.credits',
       });
     });
+
+    it('should project the phase and timeout flag of each render attempt', async () => {
+      mocks.exec.mockResolvedValue([]);
+
+      await service.listRuns();
+
+      const [pipeline] = mocks.workflowRunModel.aggregate.mock.calls[0] as [
+        { $project: { renderAttempts: { $map: { in: unknown } } } }[],
+      ];
+      expect(pipeline[1].$project.renderAttempts.$map.in).toMatchObject({
+        timedOut: '$$attempt.timedOut',
+        phase: '$$attempt.phase',
+      });
+    });
   });
 
   describe('aggregate', () => {

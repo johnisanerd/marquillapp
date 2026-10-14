@@ -10,6 +10,7 @@ import type {
   BrowserlessUsage,
   RenderAttemptUsage,
   RenderSessionOutcome,
+  RenderTrace,
 } from '../../document-render/render-usage.types';
 import { assemble } from '../../document-source/assemble';
 import { IconInliningError } from '../../document-source/icon-inlining.error';
@@ -153,8 +154,9 @@ export const renderPdfStep: StepHandler = async (state, ctx) => {
       const outcome = outcomeOf(violations);
       if (outcome === 'PASSED') return { session, violations, outcome };
 
+      if (session.facts.timedOut) logTimeout(ctx, sessions, session.trace);
       await recordRenderAttempt(ctx, {
-        ...session.usage,
+        ...attemptOf(session),
         outcome,
         billed: outcome === 'FINDINGS',
       });
@@ -267,6 +269,37 @@ function assembleSource(
 }
 
 /**
+ * What a session reports about itself for the run's `renderAttempts` entry:
+ * its usage, the phase it reached and the time each phase took, and whether
+ * it hit its deadline (§11.1).
+ */
+function attemptOf({
+  usage,
+  trace,
+  facts,
+}: RenderSessionResult): Omit<RenderAttemptUsage, 'outcome' | 'billed'> {
+  return {
+    ...usage,
+    ...trace,
+    ...(facts.timedOut ? { timedOut: true } : {}),
+  };
+}
+
+/**
+ * Logs where a timed-out session hung (§11.6): the run, the phases and their
+ * times, never the Candidate Source or the Document Source.
+ */
+function logTimeout(
+  ctx: StepContext,
+  session: number,
+  trace: RenderTrace | undefined,
+): void {
+  ctx.logger.warn(
+    `render.timeout run=${ctx.run.runId} session=${session} phase=${trace?.phase ?? 'unknown'} phaseMs=${JSON.stringify(trace?.phaseMs ?? {})}`,
+  );
+}
+
+/**
  * Records one render session on the run, and counts it in the run's
  * diagnostics, which refer to these entries rather than copy them.
  */
@@ -290,6 +323,7 @@ async function renderSession(
     if (error instanceof RenderSessionError) {
       await recordRenderAttempt(ctx, {
         ...error.usage,
+        ...error.trace,
         outcome: 'ERROR',
         billed: false,
       });
@@ -326,7 +360,7 @@ async function publish(
   const { artifactId, version } = state.input;
   const recordSession = (coverFailure?: string) =>
     recordRenderAttempt(ctx, {
-      ...session.usage,
+      ...attemptOf(session),
       outcome: 'PASSED',
       billed: true,
       ...(coverFailure !== undefined ? { coverFailure } : {}),

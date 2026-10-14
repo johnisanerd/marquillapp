@@ -531,6 +531,128 @@ describe('renderPdfStep', () => {
     });
   });
 
+  describe('render trace', () => {
+    const TRACE = {
+      phase: 'probe',
+      phaseMs: { connect: 800, setup: 120, load: 9_000, probe: 50_000 },
+    };
+
+    it('should record the phase and per-phase timings of a session that passes', async () => {
+      const passing = { phase: 'pdf', phaseMs: { connect: 700, pdf: 4_000 } };
+      mocks.renderer.render.mockResolvedValue(
+        fixtures.session({ trace: passing }),
+      );
+
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(attemptsOf(mocks)).toEqual([
+        {
+          durationMs: 14_000,
+          units: 1,
+          ...passing,
+          outcome: 'PASSED',
+          billed: true,
+        },
+      ]);
+    });
+
+    it('should record the phase a timed-out session hung in, with the same outcome and billing as before', async () => {
+      mockedJudge.mockReturnValueOnce([
+        { code: 'render.timeout', detail: 'did not finish' },
+      ]);
+      mocks.renderer.render
+        .mockResolvedValueOnce(
+          fixtures.session({
+            facts: { timedOut: true },
+            pdf: null,
+            pageCount: null,
+            usage: { durationMs: 60_003, units: 3 },
+            trace: TRACE,
+          }),
+        )
+        .mockResolvedValueOnce(fixtures.session());
+
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(attemptsOf(mocks)[0]).toEqual({
+        durationMs: 60_003,
+        units: 3,
+        ...TRACE,
+        timedOut: true,
+        outcome: 'RETRY',
+        billed: false,
+      });
+      expect(mocks.meter.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amount: 1,
+          detail: { browserless: { durationMs: 14_000, units: 1 } },
+        }),
+      );
+    });
+
+    it('should log the run, session, phase and timings of a timeout, and nothing of the document', async () => {
+      mockedJudge.mockReturnValueOnce([
+        { code: 'render.timeout', detail: 'did not finish' },
+      ]);
+      mocks.renderer.render
+        .mockResolvedValueOnce(
+          fixtures.session({ facts: { timedOut: true }, trace: TRACE }),
+        )
+        .mockResolvedValueOnce(fixtures.session());
+
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(mocks.logger.warn).toHaveBeenCalledTimes(1);
+      const [line] = mocks.logger.warn.mock.calls[0] as [string];
+      expect(line).toContain('run=run-1');
+      expect(line).toContain('session=1');
+      expect(line).toContain('phase=probe');
+      expect(line).toContain(JSON.stringify(TRACE.phaseMs));
+      expect(line).not.toContain(CANDIDATE);
+      expect(line).not.toContain(SOURCE);
+    });
+
+    it('should not mark a retry that was not a timeout', async () => {
+      mockedJudge.mockReturnValueOnce([
+        { code: 'render.fonts.failed', detail: 'a face failed' },
+      ]);
+      mocks.renderer.render.mockResolvedValue(
+        fixtures.session({ trace: TRACE }),
+      );
+
+      await renderPdfStep(fixtures.state, ctx);
+
+      expect(attemptsOf(mocks)[0]).toMatchObject({ outcome: 'RETRY' });
+      expect(attemptsOf(mocks)[0]).not.toHaveProperty('timedOut');
+      expect(mocks.logger.warn).not.toHaveBeenCalled();
+    });
+
+    it('should record the phase a failed session reached', async () => {
+      mocks.renderer.render.mockRejectedValue(
+        new RenderSessionError(
+          'socket hang up',
+          { durationMs: 2_000, units: 1 },
+          { trace: { phase: 'load', phaseMs: { connect: 300, load: 1_700 } } },
+        ),
+      );
+
+      await expect(renderPdfStep(fixtures.state, ctx)).rejects.toMatchObject({
+        code: 'render.unavailable',
+      });
+
+      expect(attemptsOf(mocks)).toEqual([
+        {
+          durationMs: 2_000,
+          units: 1,
+          phase: 'load',
+          phaseMs: { connect: 300, load: 1_700 },
+          outcome: 'ERROR',
+          billed: false,
+        },
+      ]);
+    });
+  });
+
   describe('in-step retry', () => {
     it('should render the same Document Source again after a pause, spending no Repair', async () => {
       mockedJudge.mockReturnValueOnce([

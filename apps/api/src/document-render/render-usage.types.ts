@@ -5,6 +5,42 @@ export interface BrowserlessUsage {
 }
 
 /**
+ * The stages of one render session (§5.1), in order. A phase ends where the
+ * next begins:
+ *
+ * - `connect` — `puppeteer.connect`: Browserless queueing and the handshake.
+ * - `setup` — the page, JavaScript off, request interception, print media and
+ *   the viewport.
+ * - `load` — `setContent` until `load`, which waits on the font stylesheet.
+ * - `probe` — the in-page probe, which waits on `document.fonts.ready`.
+ * - `fontPass` — `CSS.getPlatformFontsForNode` for each text element.
+ * - `cover` — the `cover.png` capture.
+ * - `pdf` — `page.pdf` and the page count.
+ */
+export const RENDER_PHASES = [
+  'connect',
+  'setup',
+  'load',
+  'probe',
+  'fontPass',
+  'cover',
+  'pdf',
+] as const;
+
+export type RenderPhase = (typeof RENDER_PHASES)[number];
+
+/**
+ * Where a session got to and how long each phase took (§11.1). `phase` is the
+ * one running when the session ended: the last phase of a session that
+ * finished, the phase that hung or threw otherwise. `phaseMs` holds every
+ * phase the session entered, the last one up to the moment it ended.
+ */
+export interface RenderTrace {
+  phase: RenderPhase;
+  phaseMs: Partial<Record<RenderPhase, number>>;
+}
+
+/**
  * How one render session ended (§7.7):
  *
  * - `PASSED` — the judge found nothing; the session produced the PDF.
@@ -25,9 +61,12 @@ export type RenderSessionOutcome =
  * session with a verdict (`PASSED` or `FINDINGS`) is `billed`. The others are
  * absorbed.
  */
-export interface RenderAttemptUsage extends BrowserlessUsage {
+export interface RenderAttemptUsage
+  extends BrowserlessUsage, Partial<RenderTrace> {
   outcome: RenderSessionOutcome;
   billed: boolean;
+  /** Set when the session hit its deadline; `phase` is then where it hung. */
+  timedOut?: true;
   /** Why `cover.png` is missing, when the capture or its upload failed. */
   coverFailure?: string;
 }

@@ -1,4 +1,7 @@
-import type { RenderSessionOutcome } from '../document-render/render-usage.types';
+import type {
+  RenderPhase,
+  RenderSessionOutcome,
+} from '../document-render/render-usage.types';
 import type {
   CandidateDiagnostics,
   CheckOutcome,
@@ -32,6 +35,10 @@ export interface DocumentRunRow {
     outcome: RenderSessionOutcome;
     billed: boolean;
     units: number;
+    /** Set on a session that hit its deadline; `phase` is where it hung. */
+    timedOut?: boolean;
+    /** Absent on sessions recorded before phases were traced. */
+    phase?: RenderPhase;
   }[];
 }
 
@@ -83,6 +90,11 @@ export interface DocumentMetricsBucket {
     billedUnits: number;
     /** Units of sessions that were not billed to the user. */
     absorbedUnits: number;
+    /**
+     * Sessions that hit the deadline, per phase they hung in; `unknown` for a
+     * session recorded before phases were traced (§11.1).
+     */
+    timeoutsByPhase: Partial<Record<RenderPhase | 'unknown', number>>;
   };
   wallTimeMs: Percentiles;
   /** Over `READY` runs: a failed run's credits are metered, never charged. */
@@ -236,7 +248,20 @@ function renderSessionsOf(
     retries: sessions.filter((session) => session.outcome === 'RETRY').length,
     billedUnits: units(true),
     absorbedUnits: units(false),
+    timeoutsByPhase: timeoutsByPhase(sessions),
   };
+}
+
+function timeoutsByPhase(
+  sessions: DocumentRunRow['renderAttempts'],
+): DocumentMetricsBucket['renderSessions']['timeoutsByPhase'] {
+  const counts: DocumentMetricsBucket['renderSessions']['timeoutsByPhase'] = {};
+  for (const session of sessions) {
+    if (!session.timedOut) continue;
+    const phase = session.phase ?? 'unknown';
+    counts[phase] = (counts[phase] ?? 0) + 1;
+  }
+  return counts;
 }
 
 /**
