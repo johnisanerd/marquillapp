@@ -1,7 +1,9 @@
 import {
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -91,6 +93,65 @@ export async function findFile(key: string): Promise<Buffer | null> {
       return null;
     }
     throw error;
+  }
+}
+
+/** Every key that starts with `prefix`, across all pages of the listing. */
+export async function listFiles(prefix: string): Promise<string[]> {
+  if (!prefix) {
+    throw new Error('listFiles requires a non-empty prefix');
+  }
+  const { client, bucket } = getClient();
+  const keys: string[] = [];
+  let continuationToken: string | undefined;
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: continuationToken,
+      }),
+    );
+    for (const object of page.Contents ?? []) {
+      if (object.Key) keys.push(object.Key);
+    }
+    continuationToken = page.IsTruncated
+      ? page.NextContinuationToken
+      : undefined;
+  } while (continuationToken);
+  return keys;
+}
+
+const S3_BATCH_DELETE_LIMIT = 1000;
+
+/**
+ * Deletes the keys in batches. A batch answers 200 even when it could not
+ * delete some objects, so a reported per-object error throws; a missing key
+ * is not an error, which makes a repeated call safe.
+ */
+export async function deleteFiles(keys: string[]): Promise<void> {
+  if (keys.length === 0) {
+    return;
+  }
+  const { client, bucket } = getClient();
+  for (let i = 0; i < keys.length; i += S3_BATCH_DELETE_LIMIT) {
+    const batch = keys.slice(i, i + S3_BATCH_DELETE_LIMIT);
+    const response = await client.send(
+      new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: {
+          Objects: batch.map((Key) => ({ Key })),
+          Quiet: true,
+        },
+      }),
+    );
+    const failures = response.Errors ?? [];
+    if (failures.length > 0) {
+      const [first] = failures;
+      throw new Error(
+        `R2 failed to delete ${failures.length} of ${batch.length} object(s), first "${first.Key}": ${first.Code ?? 'unknown'} ${first.Message ?? ''}`.trim(),
+      );
+    }
   }
 }
 

@@ -54,6 +54,8 @@ Use the Dockerfile. It is the setup verified to work: both processes were booted
   1. `nest build` must run under **Node**, not Bun. Under Bun, `src/...` imports are left unresolved in `dist/`, and the app crashes with `Cannot find module 'src/common/HelperFn'`.
   2. The start command must run from `apps/api` (for example `cd apps/api && node dist/main.js`), because templates load from `process.cwd()/assets`.
 
+**Deploy order on a `contract` bump.** When a release raises the Design System `SUPPORTED_CONTRACT`, deploy the worker before the API (document generation spec §11.7). Once the API is on the new contract, it pins new Attempts to it, and a worker still on the old one fails them as transient `contract ≠ SUPPORTED_CONTRACT` errors until it rolls.
+
 ## Docker
 
 - `apps/api/Dockerfile` is a multi-stage build from the repository root. It installs only `@marquill/api` dependencies with `--frozen-lockfile`, builds under Node, and ships a `node:22-slim` runtime with production dependencies, `dist/`, and `assets/`.
