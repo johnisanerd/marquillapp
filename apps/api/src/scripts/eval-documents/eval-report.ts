@@ -3,6 +3,7 @@ import type {
   Percentiles,
   ViolationTally,
 } from '../../diagnostics/document-metrics';
+import { EVAL_BRIEFS } from './briefs';
 import { formatDuration, type SystemVerdict } from './eval-gates';
 import type { EvalResult } from './eval-runner';
 
@@ -64,19 +65,10 @@ export function formatEvalReport(result: EvalResult): string {
       ],
     ),
   );
-  const failureBreakdown = Object.entries(metrics.overall.failures);
-  lines.push(
-    '',
-    `Failure codes: ${failureBreakdown.length === 0 ? 'none' : failureBreakdown.map(([code, count]) => `${code}: ${count}`).join(', ')}`,
-    `Repair rounds (runs per rounds spent): ${JSON.stringify(metrics.overall.repairRounds)}`,
-    `Top static violations: ${violations(metrics.overall.violations.static)}`,
-    `Top render violations: ${violations(metrics.overall.violations.render)}`,
-  );
-  const first = metrics.overall.firstCandidate;
-  lines.push(
-    '',
-    `First-candidate pass rate: ${percent(first.passRate)} (${first.passed} of ${first.runs}) — recorded, not gated`,
-  );
+  lines.push('', ...bucketDetail(metrics.overall));
+  for (const [id, bucket] of Object.entries(metrics.byDesignSystem)) {
+    lines.push('', ...bucketDetail(bucket, id));
+  }
 
   section('Gates (spec §11.3)');
   for (const gate of evaluation.gates) {
@@ -90,7 +82,7 @@ export function formatEvalReport(result: EvalResult): string {
     `Alerts: check Railway logs for \`[ALERT\` between ${result.startedAt} and ${result.finishedAt} (alerts are log lines only, so this gate is manual)`,
   );
 
-  section('Per-system verdict (3 INITIAL runs each)');
+  section(`Per-system verdict (${EVAL_BRIEFS.length} INITIAL runs each)`);
   lines.push(
     ...table(
       ['system', 'failures', 'verdict'],
@@ -128,6 +120,23 @@ export function formatEvalReport(result: EvalResult): string {
 
   lines.push('', `RESULT: ${evaluation.passed ? 'PASS' : 'FAIL'}`);
   return lines.join('\n');
+}
+
+/** §11.5's per-group detail: failure codes, Repair rounds, violations, first-candidate rate. */
+function bucketDetail(
+  bucket: DocumentMetricsBucket,
+  designSystemId?: string,
+): string[] {
+  const prefix = designSystemId ? `[${designSystemId}] ` : '';
+  const failures = Object.entries(bucket.failures);
+  const first = bucket.firstCandidate;
+  return [
+    `${prefix}Failure codes: ${failures.length === 0 ? 'none' : failures.map(([code, count]) => `${code}: ${count}`).join(', ')}`,
+    `${prefix}Repair rounds (runs per rounds spent): ${JSON.stringify(bucket.repairRounds)}`,
+    `${prefix}Top static violations: ${violations(bucket.violations.static)}`,
+    `${prefix}Top render violations: ${violations(bucket.violations.render)}`,
+    `${prefix}First-candidate pass rate: ${percent(first.passRate)} (${first.passed} of ${first.runs}) — recorded, not gated`,
+  ];
 }
 
 function bucketRow(scope: string, bucket: DocumentMetricsBucket): string[] {

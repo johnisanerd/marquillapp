@@ -21,6 +21,9 @@ then polls the run records until every run ends:
 The briefs are fixtures in `src/scripts/eval-documents/briefs.ts`. Every system gets the same three, so a
 failure is comparable across systems. Research is off for every run.
 
+A run's status can end a moment before the worker saves its diagnostics, so after the last run ends the
+script waits up to 2 minutes for every ended run's diagnostics. A run with none after that counts as failing.
+
 The script only **enqueues**. The model calls, the Browserless sessions and the normal
 `documentDiagnostics` all come from the **worker process**, so the numbers are the real pipeline's. If no
 worker is consuming the queue, the runs sit `RUNNING` until `--timeout-min` and the eval fails.
@@ -76,10 +79,13 @@ the next queued run the moment the last one settles, so resetting before launch 
 So the script does both:
 
 - it upserts an **active Subscription** for the eval user on the active Tier with the most credits
-  (Pro Writer, 30,000, in the tier seeds), valid for a year from each run of the script. It is a Mongo
+  (the top paid tier in the tier seeds), valid for a year from each run of the script. It is a Mongo
   document with no Paddle or Polar id, so no billing webhook can touch it;
 - before **each launch** it deletes that one user's `credits` Usage rows. It never touches any other user, and
   a run's own credits are read from its diagnostics, which the reset does not affect.
+
+**Run it against a dev environment.** The Subscription row makes the eval user look like a paying subscriber
+to anything that counts Subscription documents; remove the user's Subscription afterwards if that matters.
 
 The user and its runs stay in the database. Re-running the eval reuses the user.
 
@@ -87,15 +93,16 @@ The user and its runs stay in the database. Re-running the eval reuses the user.
 
 1. **Runs** — each matrix entry, its state and run id. `NOT_RUN` and `LAUNCH_FAILED` carry the reason.
 2. **Aggregates** — `DocumentMetricsService.aggregate({ runIds })` over exactly this eval's runs (§11.5),
-   overall and per system. Per-system rows group by the pin, so they include the Refinements that landed
-   on that system.
+   overall and per system, each with its failure codes, Repair rounds, top violations and first-candidate
+   pass rate. Per-system figures group by the pin, so they include the Refinements that landed on that system.
 3. **Gates** — each §11.3 gate, `PASS` or `FAIL`:
    - runs failing ≤ 1. A run that timed out, never launched or left no diagnostics counts as failing.
    - `document.truncated` = 0, counting a truncation that a job retry absorbed.
    - `render.egress` = 0, from the render checks in each run's diagnostics.
    - slowest run ≤ 4 minutes, from `documentDiagnostics.wallTimeMs`, failed runs included.
-   - costliest successful run ≤ 3× the cheapest at the same page count, grouped by the document's actual
-     page count.
+   - costliest successful run ≤ 3× the cheapest at the same page count, grouped by the pages the brief asked
+     for. Only the 18 INITIAL runs are compared: a Refinement's prompt carries its source document, so it
+     costs more by construction.
    - the default Design System (`margin`) has no failures. This is §11.4: the default may never be
      unlisted, so a failing default blocks rollout.
 4. **Alerts** are log lines only, so the script cannot gate on them. It prints the window to search: check

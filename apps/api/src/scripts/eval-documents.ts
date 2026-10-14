@@ -26,10 +26,12 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { writeFile } from 'node:fs/promises';
 import { AppModule } from '../app.module';
-import { createEvalDeps } from './eval-documents/eval-deps';
-import { parseEvalArgs } from './eval-documents/eval-options';
-import { formatEvalReport } from './eval-documents/eval-report';
-import { runDocumentEval } from './eval-documents/eval-runner';
+import {
+  createEvalDeps,
+  formatEvalReport,
+  parseEvalArgs,
+  runDocumentEval,
+} from './eval-documents/index';
 
 async function run(): Promise<boolean> {
   const options = parseEvalArgs(process.argv.slice(2));

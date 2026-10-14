@@ -198,6 +198,21 @@ describe('formatEvalReport', () => {
     expect(report).toContain('document.repair_exhausted: 1');
   });
 
+  it("should print each system's failure codes, repair rounds, violations and first-candidate rate", () => {
+    const report = formatEvalReport(makeResult({ failMargin: true }));
+
+    expect(report).toContain(
+      '[margin] Failure codes: document.repair_exhausted: 1',
+    );
+    expect(report).toContain('[afterglow] Failure codes: none');
+    expect(report).toContain('[margin] Repair rounds');
+    expect(report).toContain('[margin] Top static violations: none');
+    expect(report).toContain('[margin] Top render violations: none');
+    expect(report).toContain(
+      '[margin] First-candidate pass rate: n/a (0 of 0)',
+    );
+  });
+
   it('should list every READY run in the cover review table with its URL', () => {
     const report = formatEvalReport(makeResult({ failMargin: true }));
 

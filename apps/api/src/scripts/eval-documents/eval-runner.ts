@@ -14,6 +14,9 @@ import type { EvalRunRecord } from './eval-record';
 /** The launch set (spec §3.6): six listed systems, so the matrix is 20 runs. */
 export const LAUNCH_SET_SIZE = 6;
 
+/** How long to wait for the diagnostics of runs that have already ended. */
+export const DIAGNOSTICS_GRACE_MS = 2 * 60 * 1000;
+
 export interface EvalOptions {
   /** Runs in flight at once, so queue wait does not distort wall time. */
   concurrency: number;
@@ -47,7 +50,11 @@ export interface EvalDeps {
   account: { userId: string; resetCredits(): Promise<void> };
   /** The same service path `POST /artifacts` and `POST /artifacts/:id/refine` call. */
   generation: EvalGeneration;
-  /** `status` is the run record's `RunStatus`: `RUNNING`, `COMPLETED` or `FAILED`. */
+  /**
+   * `status` is the run record's `RunStatus` (`RUNNING`, `COMPLETED`, `FAILED`), kept
+   * as a string: importing the schema's enum drags Mongoose decorators into this
+   * module's unit tests.
+   */
   runs: { getRun(runId: string): Promise<{ status: string } | null> };
   metrics: {
     aggregate(query: DocumentMetricsQuery): Promise<DocumentMetrics>;
@@ -147,10 +154,8 @@ export async function runDocumentEval(
   });
 
   const runIds = records.flatMap(({ runId }) => (runId ? [runId] : []));
-  const [rows, metrics] = await Promise.all([
-    deps.metrics.listRuns({ runIds }),
-    deps.metrics.aggregate({ runIds }),
-  ]);
+  const rows = await awaitDiagnostics(deps, options, records, runIds);
+  const metrics = await deps.metrics.aggregate({ runIds });
   const evaluation = evaluateEval({
     records,
     rows,
@@ -172,6 +177,29 @@ export async function runDocumentEval(
   };
 }
 
+/**
+ * A run record turns terminal before the worker saves the run's diagnostics,
+ * so the last runs can end with no row yet. This waits for a row from every run
+ * that ended, for at most the grace period; a run that still has none after
+ * that counts as failing, which is what a run without diagnostics is.
+ */
+async function awaitDiagnostics(
+  deps: EvalDeps,
+  options: EvalOptions,
+  records: EvalRunRecord[],
+  runIds: string[],
+): Promise<DocumentRunRow[]> {
+  const ended = records.filter(
+    ({ state }) => state === 'COMPLETED' || state === 'FAILED',
+  ).length;
+  const deadline = deps.clock.now() + DIAGNOSTICS_GRACE_MS;
+  for (;;) {
+    const rows = await deps.metrics.listRuns({ runIds });
+    if (rows.length >= ended || deps.clock.now() >= deadline) return rows;
+    await deps.clock.sleep(options.pollMs);
+  }
+}
+
 function assertLaunchSet(
   designSystemIds: string[],
   defaultDesignSystemId: string,
@@ -188,19 +216,19 @@ function assertLaunchSet(
   }
 }
 
-interface Refinement {
+interface RefineLaunch {
   record: EvalRunRecord;
   source?: EvalRunRecord;
   feedback: string;
   designSystemId?: string;
 }
 
-/** Fixes a Refinement's source and, for a switch, its target system. */
+/** Fixes a REFINE run's source and, for a switch, its target system. */
 function refineRecord(
   entry: RefineEvalEntry,
   source: EvalRunRecord | undefined,
   designSystemIds: string[],
-): Refinement {
+): RefineLaunch {
   const designSystemId =
     entry.mode === 'switch' && source?.requestedDesignSystemId
       ? switchTarget(designSystemIds, source.requestedDesignSystemId)
@@ -244,14 +272,16 @@ function createLauncher(
       Object.assign(record, await start());
     } catch (error: unknown) {
       record.state = 'LAUNCH_FAILED';
-      record.error = error instanceof Error ? error.message : String(error);
+      record.error = errorMessage(error);
       deps.log(`[${record.key}] launch failed: ${record.error}`);
       return;
     }
-    deps.log(`[${record.key}] launched run ${record.runId}`);
+    const { runId } = record;
+    if (!runId) return;
+    deps.log(`[${record.key}] launched run ${runId}`);
 
     for (;;) {
-      const run = await deps.runs.getRun(record.runId!);
+      const run = await deps.runs.getRun(runId);
       if (!run) {
         record.state = 'FAILED';
         record.error = 'the run record is missing';
@@ -297,7 +327,7 @@ async function coverReview(
       );
       if (!entry.coverUrl) entry.note = 'no cover was captured';
     } catch (error: unknown) {
-      entry.note = `cover URL failed: ${error instanceof Error ? error.message : String(error)}`;
+      entry.note = `cover URL failed: ${errorMessage(error)}`;
     }
     entries.push(entry);
   }
@@ -320,4 +350,8 @@ async function runPool<T>(
   await Promise.all(
     Array.from({ length: Math.min(concurrency, items.length) }, worker),
   );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

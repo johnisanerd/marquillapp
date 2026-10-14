@@ -1,7 +1,7 @@
 import type { EvalOptions } from './eval-runner';
 
 export const DEFAULT_CONCURRENCY = 2;
-/** Twenty runs of up to four minutes at two a time is about 40 minutes of work. */
+/** The worker takes one job at a time: twenty runs at the 4-minute limit is about 80 minutes. */
 export const DEFAULT_TIMEOUT_MIN = 120;
 export const DEFAULT_POLL_MS = 10_000;
 

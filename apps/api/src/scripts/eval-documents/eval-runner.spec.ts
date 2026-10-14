@@ -47,6 +47,8 @@ const makeEval = (
     failing?: (launch: Launched) => boolean;
     /** Polls before a run ends; `Infinity` never ends. */
     pollsToEnd?: number;
+    /** `listRuns` calls that return nothing before the diagnostics are saved; `Infinity` never. */
+    diagnosticsLag?: number;
     launchError?: (launch: {
       kind: string;
       index: number;
@@ -58,6 +60,7 @@ const makeEval = (
   let active = 0;
   let maxActive = 0;
   const launched: Launched[] = [];
+  let listRunsCalls = 0;
   const polls = new Map<string, number>();
   const ended = new Set<string>();
   const log: string[] = [];
@@ -132,8 +135,9 @@ const makeEval = (
       }),
     },
     metrics: {
-      listRuns: jest.fn(async ({ runIds }: { runIds?: string[] }) =>
-        (runIds ?? []).flatMap((runId) => {
+      listRuns: jest.fn(async ({ runIds }: { runIds?: string[] }) => {
+        if (listRunsCalls++ < (config.diagnosticsLag ?? 0)) return [];
+        return (runIds ?? []).flatMap((runId) => {
           const run = launched.find((entry) => entry.runId === runId);
           if (!run) return [];
           const row = makeRow(
@@ -146,8 +150,8 @@ const makeEval = (
               ? { ...row, outcome: 'FAILED' as const }
               : row,
           ];
-        }),
-      ),
+        });
+      }),
       aggregate: jest.fn(async ({ runIds }: { runIds?: string[] }) =>
         computeDocumentMetrics(
           (runIds ?? []).map((runId) => makeRow(runId, 'margin', 4)),
@@ -265,6 +269,26 @@ describe('runDocumentEval', () => {
     expect(mocks.metrics.aggregate).toHaveBeenCalledWith({ runIds });
     expect(result.rows).toHaveLength(20);
     expect(result.metrics.overall.runs).toBe(20);
+  });
+
+  it('should wait for the diagnostics of runs whose status has already ended', async () => {
+    const { run, mocks } = makeEval({ diagnosticsLag: 3 });
+
+    const result = await run();
+
+    expect(mocks.metrics.listRuns).toHaveBeenCalledTimes(4);
+    expect(result.rows).toHaveLength(20);
+    expect(result.evaluation.passed).toBe(true);
+  });
+
+  it('should stop waiting for diagnostics that never arrive and count those runs as failing', async () => {
+    const { run, mocks } = makeEval({ diagnosticsLag: Infinity });
+
+    const result = await run();
+
+    expect(mocks.metrics.listRuns.mock.calls.length).toBeLessThan(200);
+    expect(result.rows).toEqual([]);
+    expect(result.evaluation.passed).toBe(false);
   });
 
   it('should pass every gate when all 20 runs are ready', async () => {

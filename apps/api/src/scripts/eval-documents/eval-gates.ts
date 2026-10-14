@@ -162,8 +162,10 @@ function slowestGate(
 
 /**
  * Spec §11.3: the most expensive successful run is at most 3× the cheapest at
- * the same page count. A run is grouped by the pages its document has, which
- * is what drives cost, and by the brief's page count when it left none.
+ * the same page count. Runs are grouped by the pages the brief asks for, the
+ * matrix's own control, so a model that drifts off the count cannot dodge the
+ * comparison. Refinements are left out: their prompt carries the source
+ * document, so they cost more by construction.
  */
 function costSpreadGate(
   records: EvalRunRecord[],
@@ -172,8 +174,8 @@ function costSpreadGate(
   const groups = new Map<number, number[]>();
   for (const record of records) {
     const row = rowOf(record);
-    if (row?.outcome !== 'READY') continue;
-    const pages = row.pageCount ?? record.requestedPages;
+    if (record.kind !== 'INITIAL' || row?.outcome !== 'READY') continue;
+    const pages = record.requestedPages;
     groups.set(pages, [...(groups.get(pages) ?? []), row.credits]);
   }
   const spreads = [...groups.entries()]

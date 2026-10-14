@@ -281,10 +281,27 @@ describe('evaluateEval', () => {
       ).toBe(true);
     });
 
-    it('should group a run by its actual page count', () => {
+    it('should group runs by the pages their brief asked for, not the pages the model produced', () => {
       const clean = makeCleanEval();
       clean.rows[0].pageCount = 5;
       clean.rows[0].credits = 1000;
+
+      const result = gate(evaluate(clean.records, clean.rows), 'cost-spread');
+
+      expect(result.pass).toBe(false);
+      expect(result.detail).toContain('4 pages');
+    });
+
+    it('should leave refinements out, since they carry their source in the prompt', () => {
+      const clean = makeCleanEval();
+      clean.records.push(
+        makeRecord({
+          key: 'refine/carry-pin',
+          kind: 'REFINE',
+          runId: 'refine',
+        }),
+      );
+      clean.rows.push(makeRow({ runId: 'refine', credits: 99_999 }));
 
       expect(
         gate(evaluate(clean.records, clean.rows), 'cost-spread').pass,
