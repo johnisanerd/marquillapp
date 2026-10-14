@@ -66,7 +66,17 @@ export interface GenerateInput {
   refine?: { priorContent: ArtifactContent; feedback: string };
 }
 
-/** The INITIAL DOCUMENT draft (spec §7.5). Refinement arrives with #171. */
+/**
+ * What a DOCUMENT refinement sees of its base (spec §6.5): the accepted
+ * Candidate Source, never the assembled Document Source.
+ */
+export interface DocumentRefineInput {
+  candidate: string;
+  commentary?: string;
+  feedback: string;
+}
+
+/** A DOCUMENT draft (spec §7.5), INITIAL or REFINE. */
 export interface DocumentGenerateInput {
   prompt: string;
   stylePreset?: StylePreset;
@@ -81,6 +91,8 @@ export interface DocumentGenerateInput {
    * final.
    */
   maxEnvelopeRepairs: number;
+  /** REFINE only: the base the model rewrites. */
+  refine?: DocumentRefineInput;
 }
 
 /**

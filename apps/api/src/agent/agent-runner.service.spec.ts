@@ -510,6 +510,35 @@ describe('AgentRunnerService', () => {
       expect(system.content).toMatch(/DESIGN SYSTEM: Margin \(margin v2\)$/);
     });
 
+    it("should give a refinement the base's Candidate Source, commentary and feedback beside the brief", async () => {
+      mocks.llmService.complete.mockResolvedValue(completion(draftJson()));
+
+      await service.generateDocument({
+        ...documentInput,
+        includeTitle: false,
+        stylePreset: StylePreset.EDUCATIONAL,
+        research: { findings: 'Prior findings', sources: [] },
+        refine: {
+          candidate: HTML,
+          commentary: 'Swipe through.',
+          feedback: 'Make page two shorter',
+        },
+      });
+
+      const [, user] = messagesOfCall(1);
+      expect(user.content).toContain('BRIEF:\nThree fixes for documents');
+      expect(user.content).toContain('VOICE:');
+      expect(user.content).toContain('RESEARCH FINDINGS:\nPrior findings');
+      expect(user.content).toContain(`PREVIOUS DOCUMENT:\n${HTML}`);
+      expect(user.content).toContain('PREVIOUS COMMENTARY:\nSwipe through.');
+      expect(user.content).toContain(
+        'REFINEMENT FEEDBACK:\nMake page two shorter',
+      );
+      expect(user.content.indexOf('BRIEF:')).toBeLessThan(
+        user.content.indexOf('PREVIOUS DOCUMENT:'),
+      );
+    });
+
     it('should drop the title when none was asked for', async () => {
       mocks.llmService.complete.mockResolvedValue(completion(draftJson()));
 

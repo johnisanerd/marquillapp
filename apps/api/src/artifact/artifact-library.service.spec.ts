@@ -1074,10 +1074,26 @@ describe('ArtifactService library API', () => {
               commentary: 'New intro',
               document: storedDocument(),
             },
+            'versions.$.editedAt': expect.any(Date),
           }),
         },
         { new: true },
       );
+    });
+
+    it('rejects a DOCUMENT commentary edit with a 409 when the Current Version is pinned by a scheduled post', async () => {
+      const { service, artifactModel, postModel } = makeService();
+      artifactModel.findById.mockResolvedValue(readyDocument());
+      postModel.exists.mockResolvedValue(true);
+
+      const error = await service
+        .updateArtifact(ids.user.toString(), ids.artifact.toString(), {
+          content: { commentary: 'Changed after approval' },
+        })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(artifactModel.findOneAndUpdate).not.toHaveBeenCalled();
     });
 
     it.each([

@@ -4,7 +4,6 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, type PipelineStage } from 'mongoose';
@@ -19,7 +18,10 @@ import { getSignedUrl } from '../s3';
 import type { StylePreset } from 'src/agent/style-presets.config';
 import type { FailureCode } from 'src/workflow/workflow.constants';
 import { WorkflowRunService } from 'src/workflow/workflow-run.service';
-import { DesignSystemsService } from '../design-system/design-systems.service';
+import {
+  DesignSystemVersionRef,
+  DesignSystemsService,
+} from '../design-system/design-systems.service';
 import {
   ArtifactDeletedError,
   ArtifactWriter,
@@ -61,6 +63,8 @@ export interface CreateArtifactInput extends ArtifactSourceInput {
 export interface RefineArtifactInput extends ArtifactSourceInput {
   version: number;
   type: ArtifactType;
+  /** DOCUMENT only: the Design System Version the Attempt is pinned to. */
+  designSystem?: DesignSystemVersionRef;
 }
 
 export interface ArtifactListQuery {
@@ -213,11 +217,16 @@ export class ArtifactService implements ArtifactWriter {
    * Current Version does not move: only promotion moves it, once the Attempt
    * is `READY`. At most one Attempt is in flight, enforced by the write itself
    * so two concurrent refines cannot both append.
+   *
+   * A DOCUMENT Attempt is pinned here, before anything is appended: to the
+   * base's exact pin, or to `designSystemId`'s ACTIVE version on an explicit
+   * switch (spec §6.5).
    */
   async appendRefineVersion(
     userId: string,
     artifactId: string,
     feedback: string,
+    designSystemId?: string,
   ): Promise<RefineArtifactInput> {
     const user = new Types.ObjectId(userId);
     const artifact = await this.artifactModel.findOne({
@@ -229,12 +238,12 @@ export class ArtifactService implements ArtifactWriter {
       throw new NotFoundException(`Artifact ${artifactId} not found`);
     }
 
-    // Refining a Document Version needs its Candidate Source in the prompt,
-    // which arrives with #171. Until then it is refused before anything is
-    // appended or charged.
-    if (artifact.type === ArtifactType.DOCUMENT) {
-      throw new UnprocessableEntityException(
-        'Refining a document is not available yet',
+    if (
+      artifact.type !== ArtifactType.DOCUMENT &&
+      designSystemId !== undefined
+    ) {
+      throw new BadRequestException(
+        'designSystemId applies only to DOCUMENT artifacts',
       );
     }
 
@@ -254,6 +263,18 @@ export class ArtifactService implements ArtifactWriter {
     if (!base) {
       throw new ConflictException(
         `Artifact ${artifactId} has no ready version to refine`,
+      );
+    }
+
+    let designSystem: DesignSystemVersionRef | undefined;
+    if (artifact.type === ArtifactType.DOCUMENT) {
+      const { document } = parseArtifactContent(
+        artifact.type,
+        base.content,
+      ) as DocumentContent;
+      designSystem = await this.designSystems.pinForRefine(
+        { id: document.designSystemId, version: document.designSystemVersion },
+        designSystemId,
       );
     }
 
@@ -295,6 +316,7 @@ export class ArtifactService implements ArtifactWriter {
       ...(artifact.source.stylePreset
         ? { stylePreset: artifact.source.stylePreset }
         : {}),
+      ...(designSystem ? { designSystem } : {}),
     };
   }
 

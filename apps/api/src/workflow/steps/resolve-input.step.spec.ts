@@ -18,6 +18,7 @@ jest.mock('../../design-system/prompt-fragment', () => ({
   renderPromptFragment: jest.fn(() => 'FRAGMENT'),
 }));
 
+import { createHash } from 'node:crypto';
 import { WorkflowError } from '../engine/workflow.error';
 import type { RunState, StepContext } from '../engine/workflow.types';
 import { resolveInputStep } from './resolve-input.step';
@@ -29,11 +30,13 @@ const makeStep = () => {
   };
   const run = { getLatestCompletedResearch: jest.fn() };
   const designSystems = { resolve: jest.fn() };
+  const objects = { get: jest.fn() };
   const logger = { error: jest.fn() };
   const ctx = {
     artifacts,
     run,
     designSystems,
+    objects,
     logger,
   } as unknown as StepContext;
 
@@ -59,7 +62,7 @@ const makeStep = () => {
 
   return {
     ctx,
-    mocks: { artifacts, run, designSystems, logger },
+    mocks: { artifacts, run, designSystems, objects, logger },
     fixtures: { state, documentState, definition },
   };
 };
@@ -261,6 +264,85 @@ describe('resolveInputStep', () => {
         retryable: false,
       });
       expect(mocks.designSystems.resolve).not.toHaveBeenCalled();
+    });
+    describe('when refining', () => {
+      const CANDIDATE = '<!doctype html><html><body></body></html>';
+      const priorContent = {
+        commentary: 'Swipe through.',
+        document: {
+          designSystemId: 'margin',
+          designSystemVersion: 2,
+          candidateKey: 'artifacts/artifact-1/1/candidate.html',
+          candidateSha256: createHash('sha256')
+            .update(CANDIDATE, 'utf8')
+            .digest('hex'),
+        },
+      };
+      const refineState = () =>
+        ({
+          input: {
+            ...fixtures.documentState.input,
+            kind: 'REFINE',
+            version: 2,
+          },
+        }) as unknown as RunState;
+
+      beforeEach(() => {
+        mocks.designSystems.resolve.mockResolvedValue({
+          contract: 1,
+          definition: fixtures.definition,
+        });
+        mocks.artifacts.readRefineInput.mockResolvedValue({
+          priorContent,
+          feedback: 'Make it warmer',
+        });
+        mocks.run.getLatestCompletedResearch.mockResolvedValue(undefined);
+      });
+
+      it("should seed the base's Candidate Source once it matches its hash", async () => {
+        mocks.objects.get.mockResolvedValue(Buffer.from(CANDIDATE, 'utf8'));
+
+        await expect(resolveInputStep(refineState(), ctx)).resolves.toEqual({
+          designSystem: {
+            definition: fixtures.definition,
+            fragment: 'FRAGMENT',
+          },
+          refine: { priorContent, feedback: 'Make it warmer' },
+          baseCandidate: CANDIDATE,
+        });
+        expect(mocks.objects.get).toHaveBeenCalledWith(
+          'artifacts/artifact-1/1/candidate.html',
+        );
+      });
+
+      it('should fail transiently when the R2 read fails', async () => {
+        mocks.objects.get.mockRejectedValue(new Error('connection reset'));
+
+        await expect(
+          resolveInputStep(refineState(), ctx),
+        ).rejects.toMatchObject({ retryable: true });
+        expect(mocks.logger.error).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['missing', null],
+        ['tampered', Buffer.from(`${CANDIDATE}<!-- -->`, 'utf8')],
+      ])(
+        'should fail terminally with artifact.source_missing and alert when the candidate is %s',
+        async (_case, body) => {
+          mocks.objects.get.mockResolvedValue(body);
+
+          await expect(
+            resolveInputStep(refineState(), ctx),
+          ).rejects.toMatchObject({
+            retryable: false,
+            code: 'artifact.source_missing',
+          });
+          expect(mocks.logger.error).toHaveBeenCalledWith(
+            expect.stringContaining('[ALERT artifact.source_missing]'),
+          );
+        },
+      );
     });
   });
 });

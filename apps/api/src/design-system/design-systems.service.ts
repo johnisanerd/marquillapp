@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -17,6 +18,7 @@ import {
   DEFAULT_DESIGN_SYSTEM_ID,
   DESIGN_SYSTEM_SEED_DIR,
   PREVIEWS_DIR,
+  SUPPORTED_CONTRACT,
   UNLISTED_DESIGN_SYSTEMS,
 } from './design-system.constants';
 
@@ -30,6 +32,12 @@ export interface DesignSystemSummary {
   summary: string;
   /** API paths of the preview images, in page order. */
   previews: string[];
+}
+
+/** An exact Design System Version a document version is pinned to. */
+export interface DesignSystemVersionRef {
+  id: string;
+  version: number;
 }
 
 const cacheKey = (id: string, version: number) => `${id}@${version}`;
@@ -164,6 +172,48 @@ export class DesignSystemsService implements OnModuleInit {
     }
     this.versions.set(key, record);
     return record;
+  }
+
+  /**
+   * The pin a Refinement's Attempt carries (spec §6.5), decided in the request
+   * path before anything is appended or charged:
+   *
+   * - with `requested`, that slug's ACTIVE version: an explicit switch, and a
+   *   `400` when the slug is not active or is unlisted;
+   * - otherwise the base's exact pin, whatever its status, unless this build
+   *   cannot consume it (it does not resolve, or its contract is not
+   *   `SUPPORTED_CONTRACT`), which is a `409 design_system.unavailable`.
+   */
+  async pinForRefine(
+    base: DesignSystemVersionRef,
+    requested?: string,
+  ): Promise<DesignSystemVersionRef> {
+    if (requested !== undefined) {
+      const { id, version } = this.getActive(requested);
+      return { id, version };
+    }
+
+    let record: DesignSystemRecord | undefined;
+    try {
+      record = await this.resolve(base.id, base.version);
+    } catch (error: unknown) {
+      if (!(error instanceof NotFoundException)) throw error;
+    }
+    if (record?.contract === SUPPORTED_CONTRACT) {
+      return { id: base.id, version: base.version };
+    }
+
+    // A pin that does not resolve has no record to name it, so it borrows its
+    // system's current name, or failing that its slug.
+    const name = record?.name ?? this.active.get(base.id)?.name ?? base.id;
+    throw new ConflictException({
+      statusCode: 409,
+      code: 'design_system.unavailable',
+      message: `The ${name} design is no longer available. Refine with another design.`,
+      designSystemId: base.id,
+      designSystemVersion: base.version,
+      designSystemName: name,
+    });
   }
 
   private isSelectable(id: string): boolean {

@@ -57,11 +57,14 @@ At most one Attempt is in flight per artifact.
 
 ```json
 {
-  "feedback": "Make the opening sharper and add a concrete example."
+  "feedback": "Make the opening sharper and add a concrete example.",
+  "designSystemId": "afterglow"
 }
 ```
 
 `feedback` is required, non-empty, and maximum 2,000 characters. Refinement does not run a new research pass; it can reuse completed research from the artifact's prior run.
+
+`designSystemId` is optional and applies only to a `DOCUMENT`. A document refinement rewrites the Current Version's document, and by default keeps the Current Version's Design System pin (`content.document.designSystemId` and `designSystemVersion`) exactly, even if that version has since been superseded or retired. Send `designSystemId` to switch: the refinement is pinned to that system's current version, as listed by `GET /design-systems`. Use it to change the look, to move to a newer version, or to answer a `409 design_system.unavailable`.
 
 ### Response: `202 Accepted`
 
@@ -78,9 +81,23 @@ At most one Attempt is in flight per artifact.
 ### Common errors
 
 - `404` artifact does not exist, is deleted, or is not owned by the caller.
+- `400` invalid body; a `designSystemId` that is unknown, superseded, retired or not listed by `GET /design-systems`; or a `designSystemId` on a type other than `DOCUMENT`. Nothing is appended or charged.
 - `409` an Attempt is already `GENERATING`, the artifact has no `READY` version to refine, or another refine started concurrently.
-- `422` the artifact is a `DOCUMENT`. Refining a document is not available yet; nothing is appended or charged.
+- `409` with `code: "design_system.unavailable"`: the Current Version's Design System can no longer be used, so it cannot be refined with the same look. Nothing is appended or charged. `message` is safe to show; retry with a `designSystemId`.
 - `403` insufficient credits.
+
+```json
+{
+  "statusCode": 409,
+  "code": "design_system.unavailable",
+  "message": "The Schematic design is no longer available. Refine with another design.",
+  "designSystemId": "schematic",
+  "designSystemVersion": 1,
+  "designSystemName": "Schematic"
+}
+```
+
+A document refinement that fails because the Current Version's stored document cannot be read ends its run with `run.failed` code `artifact.source_missing` (see [runs.md](./runs.md)).
 
 ## `GET /artifacts`
 

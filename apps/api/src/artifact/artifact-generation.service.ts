@@ -86,13 +86,17 @@ export class ArtifactGenerationService {
     userId: string,
     artifactId: string,
     feedback: string,
+    designSystemId?: string,
   ): Promise<RefineLaunchResult> {
     await this.creditMeter.assertBalance(userId);
 
+    // A DOCUMENT's pin is decided in the same call, before the Attempt is
+    // appended: an unavailable pin or an unselectable switch appends nothing.
     const refinement = await this.artifactService.appendRefineVersion(
       userId,
       artifactId,
       feedback,
+      designSystemId,
     );
 
     const buildInput: BuildInput = {
@@ -100,6 +104,9 @@ export class ArtifactGenerationService {
       prompt: refinement.prompt,
       withResearch: refinement.withResearch,
       stylePreset: refinement.stylePreset,
+      ...(refinement.designSystem
+        ? { designSystem: refinement.designSystem }
+        : {}),
       kind: RunKind.REFINE,
       userId,
       artifactId,
