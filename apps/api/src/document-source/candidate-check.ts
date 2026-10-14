@@ -120,6 +120,10 @@ const snippet = (text: string) => {
   return flat.length > 40 ? `${flat.slice(0, 40)}…` : flat;
 };
 
+/** Does the selector end in `*` (`*`, `html *`, `*::before`)? */
+const isUniversal = (selector: ComplexSelector) =>
+  selector.compounds.at(-1)?.tag === '*';
+
 const withoutVendorPrefix = (property: string) => {
   const prefix = VENDOR_PREFIXES.find((p) => property.startsWith(p));
   return prefix ? property.slice(prefix.length) : property;
@@ -708,14 +712,17 @@ class CandidateChecker {
       );
     }
 
-    if (
-      selectors?.some((selector) =>
-        this.pages.some((page) => selectorMayMatch(selector, page)),
-      )
-    ) {
+    const pageMatches = selectors?.filter((selector) =>
+      this.pages.some((page) => selectorMayMatch(selector, page)),
+    );
+    if (pageMatches?.length) {
+      // A universal reset is the common case and has a sanctioned form.
+      const hint = pageMatches.some(isUniversal)
+        ? '; to reset the page contents, write `.page *` instead'
+        : '';
       this.add(
         'envelope.css.pageSelector',
-        `"${snippet(rule.selector)}" matches a page element; the app styles .page, so lay out an element inside it`,
+        `"${snippet(rule.selector)}" matches a page element; the app styles .page, so lay out an element inside it${hint}`,
         { line },
       );
     }

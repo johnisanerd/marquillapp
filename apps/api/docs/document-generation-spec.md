@@ -308,6 +308,24 @@ page `i` starts at `y = i·height` (§5.2). It does not set `display`.
 A model-authored rule matching a page element is a violation, not a silent override: a model that
 composed for the wrong canvas must repair, not render clipped.
 
+**What the model is told (#189, #190).** The frame is invisible to the model unless the prompt
+describes it, so the generation prompt and the prompt fragment state its contract:
+
+- The page already has padding equal to `page.safeArea`; the fragment gives the usable box,
+  `(width - left - right) x (height - top - bottom)`, derived from the pinned definition. The model
+  lays out one wrapper with `height: 100%`, no padding, no px height and no `overflow: hidden` (the
+  page already crops).
+- Because the page is `contain: strict`, it is the containing block for absolutely positioned
+  descendants. A layer on an *unpositioned* wrapper with `position: absolute; inset: 0; z-index: -1`
+  therefore covers the whole page, safe area included: the recipe for a full-page bleed or colour.
+  (On a `position: relative` wrapper the offsets would have to be minus the safe area instead.)
+- Text is black until `color` is set, and an icon takes `color` from itself: the model sets it on
+  the wrapper and on each `svg`. It uses only characters the declared fonts cover.
+- A page is exactly `<section class="page" data-role="…">`. The prompt names `*`, `body > *`,
+  `html *` and `:is()`/`:where()` lists as page-matching selectors and gives `.page *` as the
+  allowed reset; the `envelope.css.pageSelector` detail repeats that for a universal selector. The
+  rule itself is unchanged.
+
 ### 4.4 Checker and violations (#136)
 
 - **Parsers:** `parse5` (WHATWG-compliant, with `sourceCodeLocationInfo`) for markup; `postcss` for

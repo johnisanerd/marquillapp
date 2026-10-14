@@ -101,8 +101,8 @@ HTML:
 - A complete document: <!doctype html>, <html>, <head>, <body>.
 - <head> holds <meta charset="utf-8">, an optional <title>, and exactly one
   <style> block. No <link>.
-- <body> holds only <section class="page" data-role="<role>"> elements, one per
-  page, never nested.
+- <body> holds only pages, one per page, never nested. A page is
+  <section class="page" data-role="<role>"> and nothing else: no other class.
 - Inside a page use only: div, header, footer, figure, figcaption, blockquote,
   ul, ol, li, h1-h6, p, span, strong, em, small, q, cite, sup, sub, br, hr, svg.
 - The only attributes are class, data-role on page sections, and data-icon and
@@ -114,9 +114,27 @@ CSS:
 - No url(), @import, image-set(), @font-face, @media, @supports, @container,
   @page, @keyframes, animation, transition, position: fixed or sticky, or
   !important.
-- Never write a rule that matches a page section (.page, section, or
-  [data-role]). The page size, safe area and background are applied for you;
-  style what is inside the page.
+- Never write a rule that matches a page section: \`.page\`, \`section\`,
+  \`[data-role]\`, \`*\`, \`body > *\`, \`html *\`, or any \`:is()\` or \`:where()\`
+  that contains one. Scope a reset to the page's contents instead:
+  \`.page * { box-sizing: border-box; }\`.
+
+FRAME:
+- Each page already has padding equal to the safe area; the DESIGN SYSTEM gives
+  the usable box inside it. The app also paints the page background and crops
+  at the page edge.
+- Lay out one wrapper per page with height: 100%, no padding and no px height;
+  it fills the usable box exactly. The page already crops, so add no
+  overflow: hidden.
+- To bleed or colour the whole page, leave the wrapper unpositioned and give it
+  a layer: \`.wrap::before { content: ''; position: absolute; inset: 0;
+  z-index: -1; background: ...; }\` covers the whole page, safe area included.
+  An absolutely positioned element with no positioned ancestor is placed
+  against the page edge, not the safe area.
+- Text is black until you set a colour. Set color on the wrapper and on every
+  svg: an icon takes its colour from its own color, not the text beside it.
+- Use only characters the declared fonts cover. Draw check marks and bullets
+  with an icon or a CSS shape.
 
 CONSTRAINTS:
 - Follow the DESIGN SYSTEM exactly. It is the only source of colours, type
