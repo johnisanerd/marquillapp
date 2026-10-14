@@ -1,5 +1,6 @@
 import {
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
@@ -91,6 +92,26 @@ export async function findFile(key: string): Promise<Buffer | null> {
       return null;
     }
     throw error;
+  }
+}
+
+const S3_BATCH_DELETE_LIMIT = 1000;
+
+export async function deleteFiles(keys: string[]): Promise<void> {
+  if (keys.length === 0) {
+    return;
+  }
+  const { client, bucket } = getClient();
+  for (let i = 0; i < keys.length; i += S3_BATCH_DELETE_LIMIT) {
+    const batch = keys.slice(i, i + S3_BATCH_DELETE_LIMIT);
+    await client.send(
+      new DeleteObjectsCommand({
+        Bucket: bucket,
+        Delete: {
+          Objects: batch.map((Key) => ({ Key })),
+        },
+      }),
+    );
   }
 }
 

@@ -5,6 +5,7 @@ jest.mock(
     S3Client: jest.fn(),
     PutObjectCommand: jest.fn(),
     DeleteObjectCommand: jest.fn(),
+    DeleteObjectsCommand: jest.fn(),
     GetObjectCommand: jest.fn(),
     HeadObjectCommand: jest.fn(),
   }),
@@ -24,6 +25,7 @@ import {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
 } from '@aws-sdk/client-s3';
@@ -33,6 +35,7 @@ import {
   getFile,
   findFile,
   deleteFile,
+  deleteFiles,
   getSignedUrl,
   getSignedUploadUrl,
   headFile,
@@ -154,6 +157,64 @@ describe('S3 client', () => {
     it('should propagate errors from the S3 send call', async () => {
       mockSend.mockRejectedValueOnce(new Error('get failed'));
       await expect(getFile('some/key')).rejects.toThrow('get failed');
+    });
+  });
+
+  describe('deleteFiles', () => {
+    it('should return immediately without calling S3 when keys array is empty', async () => {
+      await deleteFiles([]);
+      expect(mockSend).not.toHaveBeenCalled();
+      expect(DeleteObjectsCommand).not.toHaveBeenCalled();
+    });
+
+    it('should send DeleteObjectsCommand with correct params for keys', async () => {
+      const keys = ['artifacts/a/1/document.pdf', 'artifacts/a/2/document.pdf'];
+      await deleteFiles(keys);
+
+      expect(DeleteObjectsCommand).toHaveBeenCalledWith({
+        Bucket: BUCKET,
+        Delete: {
+          Objects: [{ Key: keys[0] }, { Key: keys[1] }],
+        },
+      });
+      expect(mockSend).toHaveBeenCalledTimes(1);
+    });
+
+    it('should chunk into batches of 1000 when keys exceed 1000', async () => {
+      const keys = Array.from(
+        { length: 1500 },
+        (_, i) => 'artifacts/key-' + i + '.pdf',
+      );
+      await deleteFiles(keys);
+
+      expect(DeleteObjectsCommand).toHaveBeenCalledTimes(2);
+      expect(DeleteObjectsCommand).toHaveBeenNthCalledWith(1, {
+        Bucket: BUCKET,
+        Delete: {
+          Objects: keys.slice(0, 1000).map((Key) => ({ Key })),
+        },
+      });
+      expect(DeleteObjectsCommand).toHaveBeenNthCalledWith(2, {
+        Bucket: BUCKET,
+        Delete: {
+          Objects: keys.slice(1000).map((Key) => ({ Key })),
+        },
+      });
+      expect(mockSend).toHaveBeenCalledTimes(2);
+    });
+
+    it('should throw with a clear message when env vars are missing', async () => {
+      delete process.env.R2_ACCOUNT_ID;
+      await expect(deleteFiles(['some/key'])).rejects.toThrow(
+        'R2 storage is not configured. Missing env vars: R2_ACCOUNT_ID',
+      );
+    });
+
+    it('should propagate errors from the S3 send call', async () => {
+      mockSend.mockRejectedValueOnce(new Error('batch delete failed'));
+      await expect(deleteFiles(['some/key'])).rejects.toThrow(
+        'batch delete failed',
+      );
     });
   });
 

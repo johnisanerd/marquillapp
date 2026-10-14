@@ -25,16 +25,7 @@ it, not a description.
 
 **Keep the three files in step.** A change to a definition means a new
 `version` (#135: same-version content changes are fatal at seed) and a
-re-checked sample with re-rendered previews. Until the Browserless render
-path renders previews, they are produced by the #140 prototype with local
-Chrome:
-
-```
-bun src/carousel/prototype-design-systems/preview.ts --check    # parse + checker + contrast
-bun src/carousel/prototype-design-systems/preview.ts --render   # assemble, rewrite previews/
-```
-
-Each sample must check with zero violations against its own definition; the
+re-checked sample with re-rendered previews. Each sample must check with zero violations against its own definition; the
 seed conformance test (`src/document-source/seed-conformance.spec.ts`) fails
 otherwise. A sample is written the way the model must write: no font `<link>`,
 no rule that matches a page element (the app's frame owns `.page`, its size,

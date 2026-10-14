@@ -64,7 +64,7 @@ deleted when its production equivalent lands (§12).
 |---|---|---|
 | Design System Definition contract, prompt fragment, static checker | #134, #136 | deleted; production in `src/design-system/` and `src/document-source/` (#158, #160) |
 | Render session, probe, judge, assembly | #137 | deleted; production in `src/document-source/` (assembly, #161) and `src/document-render/` (#162) |
-| Six default systems, previews | #140 | `src/carousel/prototype-design-systems/` |
+| Six default systems, previews | #140 | deleted (#176); production in `assets/design-systems/` (#140) |
 
 ## 1. What changes
 
