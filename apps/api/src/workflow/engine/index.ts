@@ -1,3 +1,5 @@
+export * from './alert';
+export * from './document-run-diagnostics';
 export * from './run-credit-meter';
 export * from './run-deadline';
 export * from './run-event.emitter';

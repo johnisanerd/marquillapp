@@ -8,4 +8,5 @@ export * from './usage.schema';
 export * from './onboarding-profile.schema';
 export * from './artifact.schema';
 export * from './workflow-run.schema';
+export * from './run-candidate-source.schema';
 export * from './design-system.schema';

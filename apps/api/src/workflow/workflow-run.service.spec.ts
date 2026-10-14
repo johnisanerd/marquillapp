@@ -2,6 +2,8 @@ jest.mock(
   '../database/schemas',
   () => ({
     WorkflowRun: { name: 'WorkflowRun' },
+    RunCandidateSource: { name: 'RunCandidateSource' },
+    RunCandidateSourceRole: { ACCEPTED: 'ACCEPTED', FAILED: 'FAILED' },
     RunKind: { INITIAL: 'INITIAL', REFINE: 'REFINE' },
     RunStatus: {
       RUNNING: 'RUNNING',
@@ -12,8 +14,10 @@ jest.mock(
   { virtual: true },
 );
 
+import { createHash } from 'node:crypto';
 import { Types } from 'mongoose';
 import { RunKind, RunStatus } from '../database/schemas';
+import type { DocumentDiagnostics } from './engine/workflow.types';
 import { FailureCode, WorkflowStep } from './workflow.constants';
 import { WorkflowRunService } from './workflow-run.service';
 
@@ -26,7 +30,14 @@ describe('WorkflowRunService', () => {
       findOne: jest.fn(),
       find: jest.fn(),
     };
-    const service = new WorkflowRunService(workflowRunModel as any);
+    const candidateSourceModel = {
+      updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
+      findOne: jest.fn(),
+    };
+    const service = new WorkflowRunService(
+      workflowRunModel as any,
+      candidateSourceModel as any,
+    );
 
     const userId = new Types.ObjectId().toString();
     const artifactId = new Types.ObjectId().toString();
@@ -47,7 +58,11 @@ describe('WorkflowRunService', () => {
       },
     };
 
-    return { service, mocks: { workflowRunModel }, fixtures };
+    return {
+      service,
+      mocks: { workflowRunModel, candidateSourceModel },
+      fixtures,
+    };
   };
 
   let service: WorkflowRunService;
@@ -267,48 +282,202 @@ describe('WorkflowRunService', () => {
       expect(update).toEqual({ $push: { documentChecks: check } });
     });
 
-    it("should save the accepted candidate as the run's checkpoint", async () => {
-      const accepted = {
-        commentary: 'Swipe through.',
-        candidate: '<html></html>',
-        repairsSpent: 1,
-        title: 'Three fixes',
-        savedAt: new Date('2026-10-02T00:00:00.000Z'),
-      };
+    const checkpointNow = new Date('2026-10-02T00:00:00.000Z');
+    const ninetyDaysLater = new Date('2026-12-31T00:00:00.000Z');
+    const sha = (text: string) =>
+      createHash('sha256').update(text).digest('hex');
+    const accepted = {
+      commentary: 'Swipe through.',
+      candidate: '<html></html>',
+      repairsSpent: 1,
+      title: 'Three fixes',
+      savedAt: checkpointNow,
+    };
 
-      await service.handleFor(fixtures.runId).saveAcceptedCandidate(accepted);
-
-      const [filter, update] = mocks.workflowRunModel.updateOne.mock
-        .calls[0] as [{ _id: unknown }, unknown];
-      expect(filter._id).toBeInstanceOf(Types.ObjectId);
-      expect(update).toEqual({ $set: { acceptedCandidate: accepted } });
-    });
-
-    it('should read back the checkpoint an earlier attempt saved', async () => {
-      const accepted = { commentary: 'c', candidate: 'h', repairsSpent: 0 };
-      const exec = jest.fn().mockResolvedValue({ acceptedCandidate: accepted });
+    const mockStoredRun = (stored: unknown) => {
+      const exec = jest.fn().mockResolvedValue(stored);
       const lean = jest.fn().mockReturnValue({ exec });
       const select = jest.fn().mockReturnValue({ lean });
       mocks.workflowRunModel.findById.mockReturnValue({ select });
+      return { select };
+    };
+    const mockStoredText = (stored: unknown) => {
+      const exec = jest.fn().mockResolvedValue(stored);
+      const lean = jest.fn().mockReturnValue({ exec });
+      mocks.candidateSourceModel.findOne.mockReturnValue({ lean });
+    };
 
-      await expect(
-        service.handleFor(fixtures.runId).readAcceptedCandidate(),
-      ).resolves.toEqual(accepted);
-      expect(mocks.workflowRunModel.findById).toHaveBeenCalledWith(
-        fixtures.runId,
-      );
-      expect(select).toHaveBeenCalledWith({ acceptedCandidate: 1 });
-    });
+    describe('saveAcceptedCandidate', () => {
+      beforeEach(() => jest.useFakeTimers().setSystemTime(checkpointNow));
+      afterEach(() => jest.useRealTimers());
 
-    it('should read no checkpoint when no attempt saved one', async () => {
-      const exec = jest.fn().mockResolvedValue({});
-      mocks.workflowRunModel.findById.mockReturnValue({
-        select: () => ({ lean: () => ({ exec }) }),
+      it('should keep the text apart, expiring in 90 days, when it saves the checkpoint', async () => {
+        await service.handleFor(fixtures.runId).saveAcceptedCandidate(accepted);
+
+        const [filter, update, options] = mocks.candidateSourceModel.updateOne
+          .mock.calls[0] as [{ run: unknown; role: string }, unknown, unknown];
+        expect(filter.run).toBeInstanceOf(Types.ObjectId);
+        expect(filter.role).toBe('ACCEPTED');
+        expect(update).toEqual({
+          $set: {
+            candidateSha256: sha('<html></html>'),
+            candidate: '<html></html>',
+            expiresAt: ninetyDaysLater,
+          },
+        });
+        expect(options).toEqual({ upsert: true });
       });
 
-      await expect(
-        service.handleFor(fixtures.runId).readAcceptedCandidate(),
-      ).resolves.toBeUndefined();
+      it('should keep the checkpoint on the run by hash, without its text', async () => {
+        await service.handleFor(fixtures.runId).saveAcceptedCandidate(accepted);
+
+        const [filter, update] = mocks.workflowRunModel.updateOne.mock
+          .calls[0] as [{ _id: unknown }, unknown];
+        expect(filter._id).toBeInstanceOf(Types.ObjectId);
+        expect(update).toEqual({
+          $set: {
+            acceptedCandidate: {
+              commentary: 'Swipe through.',
+              candidateSha256: sha('<html></html>'),
+              repairsSpent: 1,
+              title: 'Three fixes',
+              savedAt: checkpointNow,
+            },
+          },
+        });
+        // The text first, so a stored checkpoint always has it.
+        expect(
+          mocks.candidateSourceModel.updateOne.mock.invocationCallOrder[0],
+        ).toBeLessThan(
+          mocks.workflowRunModel.updateOne.mock.invocationCallOrder[0],
+        );
+      });
+    });
+
+    describe('readAcceptedCandidate', () => {
+      it('should read back the checkpoint an earlier attempt saved, with its text', async () => {
+        const { candidate, ...rest } = accepted;
+        const { select } = mockStoredRun({
+          acceptedCandidate: { ...rest, candidateSha256: sha(candidate) },
+        });
+        mockStoredText({ candidate });
+
+        await expect(
+          service.handleFor(fixtures.runId).readAcceptedCandidate(),
+        ).resolves.toEqual(accepted);
+        expect(select).toHaveBeenCalledWith({ acceptedCandidate: 1 });
+        expect(mocks.candidateSourceModel.findOne).toHaveBeenCalledWith(
+          {
+            run: expect.any(Types.ObjectId),
+            role: 'ACCEPTED',
+            candidateSha256: sha(candidate),
+          },
+          { candidate: 1 },
+        );
+      });
+
+      it('should read no checkpoint when no attempt saved one', async () => {
+        mockStoredRun({});
+
+        await expect(
+          service.handleFor(fixtures.runId).readAcceptedCandidate(),
+        ).resolves.toBeUndefined();
+        expect(mocks.candidateSourceModel.findOne).not.toHaveBeenCalled();
+      });
+
+      it('should read no checkpoint when its text has expired', async () => {
+        const { candidate, ...rest } = accepted;
+        mockStoredRun({
+          acceptedCandidate: { ...rest, candidateSha256: sha(candidate) },
+        });
+        mockStoredText(null);
+
+        await expect(
+          service.handleFor(fixtures.runId).readAcceptedCandidate(),
+        ).resolves.toBeUndefined();
+      });
+
+      it('should read no checkpoint when it predates run_candidate_sources and has no hash', async () => {
+        mockStoredRun({ acceptedCandidate: accepted });
+
+        await expect(
+          service.handleFor(fixtures.runId).readAcceptedCandidate(),
+        ).resolves.toBeUndefined();
+        expect(mocks.candidateSourceModel.findOne).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('readDocumentDiagnostics', () => {
+      it('should read what earlier job attempts recorded', async () => {
+        const recorded = { jobAttempt: 1, outcome: 'RETRYING' };
+        const { select } = mockStoredRun({ documentDiagnostics: recorded });
+
+        await expect(
+          service.handleFor(fixtures.runId).readDocumentDiagnostics(),
+        ).resolves.toEqual(recorded);
+        expect(select).toHaveBeenCalledWith({ documentDiagnostics: 1 });
+      });
+
+      it('should read nothing when no job attempt recorded any', async () => {
+        mockStoredRun({});
+
+        await expect(
+          service.handleFor(fixtures.runId).readDocumentDiagnostics(),
+        ).resolves.toBeUndefined();
+      });
+    });
+
+    describe('saveDocumentDiagnostics', () => {
+      const now = new Date('2026-10-02T00:00:00.000Z');
+      const diagnostics: DocumentDiagnostics = {
+        jobAttempt: 1,
+        outcome: 'FAILED',
+        failureCode: FailureCode.DOCUMENT_REPAIR_EXHAUSTED,
+        jobAttemptFailures: [],
+        candidates: [],
+        repairRounds: 2,
+        outputTokens: 0,
+        stepWallTimeMs: {},
+        wallTimeMs: 0,
+        renderAttempts: { sessions: 0 },
+        credits: 0,
+        recordedAt: now,
+      };
+
+      beforeEach(() => jest.useFakeTimers().setSystemTime(now));
+      afterEach(() => jest.useRealTimers());
+
+      it('should set the diagnostics block on the run', async () => {
+        await service
+          .handleFor(fixtures.runId)
+          .saveDocumentDiagnostics(diagnostics);
+
+        expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(
+          { _id: expect.any(Types.ObjectId) },
+          { $set: { documentDiagnostics: diagnostics } },
+        );
+        expect(mocks.candidateSourceModel.updateOne).not.toHaveBeenCalled();
+      });
+
+      it('should keep the failed candidate apart, expiring in 90 days, when there is one', async () => {
+        await service
+          .handleFor(fixtures.runId)
+          .saveDocumentDiagnostics(diagnostics, '<section>failed</section>');
+
+        expect(mocks.candidateSourceModel.updateOne).toHaveBeenCalledWith(
+          { run: expect.any(Types.ObjectId), role: 'FAILED' },
+          {
+            $set: {
+              candidateSha256: createHash('sha256')
+                .update('<section>failed</section>')
+                .digest('hex'),
+              candidate: '<section>failed</section>',
+              expiresAt: new Date('2026-12-31T00:00:00.000Z'),
+            },
+          },
+          { upsert: true },
+        );
+      });
     });
 
     it('should mark the run COMPLETED with the winning attempt total', async () => {

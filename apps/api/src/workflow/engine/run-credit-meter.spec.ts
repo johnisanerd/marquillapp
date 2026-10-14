@@ -18,6 +18,7 @@ describe('RunCreditMeter', () => {
     const meter = new RunCreditMeter(
       creditMeterService as any,
       userId,
+      { runId: 'run-1', artifactId: 'artifact-1', version: 1 },
       emit,
       logger as any,
     );
@@ -195,6 +196,21 @@ describe('RunCreditMeter', () => {
 
       await expect(meter.commit()).resolves.toBeUndefined();
       expect(mocks.logger.error).toHaveBeenCalled();
+    });
+
+    it('should alert credit.commit_failed with the run when the debit fails', async () => {
+      mocks.creditMeterService.toCredits.mockReturnValue(12);
+      meter.record({ kind: 'llm', amount: 0.012 });
+      mocks.creditMeterService.debit.mockRejectedValue(new Error('mongo down'));
+
+      await meter.commit();
+
+      expect(mocks.logger.error).toHaveBeenCalledWith(
+        '[ALERT credit.commit_failed] run=run-1 artifact=artifact-1 version=1 credits=12',
+      );
+      expect(JSON.stringify(mocks.logger.error.mock.calls)).not.toContain(
+        userId,
+      );
     });
   });
 });

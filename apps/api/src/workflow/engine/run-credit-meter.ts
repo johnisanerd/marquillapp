@@ -2,6 +2,7 @@ import type { Logger } from '@nestjs/common';
 import type { UsageRecord } from '../../feature-gating/credit-meter.constants';
 import type { CreditMeterService } from '../../feature-gating/credit-meter.service';
 import { FeatureGateForbiddenException } from '../../feature-gating/feature-gating.exception';
+import { alert, type AlertSubject } from './alert';
 import { RunEventType, type EmittedEvent } from './run-event.types';
 import { describeError, terminal } from './workflow.error';
 import type { CreditMeter } from './workflow.types';
@@ -19,6 +20,8 @@ export class RunCreditMeter implements CreditMeter {
   constructor(
     private readonly creditMeterService: CreditMeterService,
     private readonly userId: string,
+    /** The run being metered, named when settlement alerts. */
+    private readonly subject: AlertSubject,
     private readonly emit: (event: EmittedEvent) => void,
     private readonly logger: Logger,
   ) {}
@@ -80,8 +83,11 @@ export class RunCreditMeter implements CreditMeter {
     try {
       await this.creditMeterService.debit(this.userId, this.used);
     } catch (error: unknown) {
+      alert(this.logger, 'credit.commit_failed', this.subject, {
+        credits: this.used,
+      });
       this.logger.error(
-        `Failed to settle ${this.used} credits for user ${this.userId}: ${describeError(error)}`,
+        `Settling run ${this.subject.runId} failed: ${describeError(error)}`,
       );
     }
   }

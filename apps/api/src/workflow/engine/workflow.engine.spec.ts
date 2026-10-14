@@ -60,6 +60,16 @@ describe('runWorkflow', () => {
       failVersion: jest.fn().mockResolvedValue(undefined),
     };
     const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() };
+    const diagnostics = {
+      stepStarted: jest.fn(),
+      stepCompleted: jest.fn(),
+      recordModelTurn: jest.fn(),
+      recordCheck: jest.fn(),
+      recordRepairsSpent: jest.fn(),
+      recordAccepted: jest.fn(),
+      recordRenderSession: jest.fn(),
+      recordPageCount: jest.fn(),
+    };
 
     const ctx = {
       logger,
@@ -68,6 +78,7 @@ describe('runWorkflow', () => {
       meter,
       renderer: { render: jest.fn() },
       emit: jest.fn(),
+      diagnostics,
       run,
     };
 
@@ -84,7 +95,16 @@ describe('runWorkflow', () => {
 
     return {
       deps: { ctx: ctx as any, emitter: emitter as any, handlers },
-      mocks: { emitter, meter, run, artifacts, logger, ctx, handlers },
+      mocks: {
+        emitter,
+        meter,
+        run,
+        artifacts,
+        logger,
+        ctx,
+        handlers,
+        diagnostics,
+      },
     };
   };
 
@@ -183,6 +203,22 @@ describe('runWorkflow', () => {
         RESOLVE_INPUT,
         GENERATE,
         PERSIST_VERSION,
+      ]);
+    });
+
+    it('should time each step in the diagnostics, leaving a failed step open', async () => {
+      (deps.handlers[GENERATE] as jest.Mock).mockRejectedValue(
+        new Error('boom'),
+      );
+
+      await runWorkflow(makeInput(), deps).catch(() => undefined);
+
+      expect(mocks.diagnostics.stepStarted.mock.calls).toEqual([
+        [RESOLVE_INPUT],
+        [GENERATE],
+      ]);
+      expect(mocks.diagnostics.stepCompleted.mock.calls).toEqual([
+        [RESOLVE_INPUT],
       ]);
     });
 
@@ -544,6 +580,26 @@ describe('handleTerminalFailure', () => {
     });
   });
 
+  it('should return the code the run was failed with', async () => {
+    await expect(
+      handleTerminalFailure(deps, {
+        ...failure,
+        failureCode: FailureCode.DOCUMENT_REPAIR_EXHAUSTED,
+      }),
+    ).resolves.toBe(FailureCode.DOCUMENT_REPAIR_EXHAUSTED);
+  });
+
+  it('should return internal, as the run stores, when the artifact was deleted mid-run', async () => {
+    mocks.artifacts.failVersion.mockResolvedValue('ARTIFACT_DELETED');
+
+    await expect(
+      handleTerminalFailure(deps, {
+        ...failure,
+        failureCode: FailureCode.DOCUMENT_REPAIR_EXHAUSTED,
+      }),
+    ).resolves.toBe(FailureCode.INTERNAL);
+  });
+
   it('should fail the run without a client message when the artifact was deleted mid-run', async () => {
     mocks.artifacts.failVersion.mockResolvedValue('ARTIFACT_DELETED');
 
@@ -574,7 +630,9 @@ describe('handleTerminalFailure', () => {
     // the run in RUNNING forever.
     mocks.artifacts.failVersion.mockRejectedValue(new Error('mongo down'));
 
-    await expect(handleTerminalFailure(deps, failure)).resolves.toBeUndefined();
+    await expect(handleTerminalFailure(deps, failure)).resolves.toBe(
+      FailureCode.INTERNAL,
+    );
 
     expect(mocks.run.fail).toHaveBeenCalled();
     expect(mocks.logger.error).toHaveBeenCalled();
@@ -583,7 +641,9 @@ describe('handleTerminalFailure', () => {
   it('should still emit run.failed when marking the run fails', async () => {
     mocks.run.fail.mockRejectedValue(new Error('mongo down'));
 
-    await expect(handleTerminalFailure(deps, failure)).resolves.toBeUndefined();
+    await expect(handleTerminalFailure(deps, failure)).resolves.toBe(
+      FailureCode.INTERNAL,
+    );
 
     expect(mocks.emitter.emit).toHaveBeenCalledWith({
       type: RunEventType.RUN_FAILED,

@@ -58,12 +58,23 @@ const makeStep = () => {
   const emit = jest.fn();
   const deadline = { assertTimeLeft: jest.fn() };
   const logger = { log: jest.fn() };
+  const diagnostics = {
+    stepStarted: jest.fn(),
+    stepCompleted: jest.fn(),
+    recordModelTurn: jest.fn(),
+    recordCheck: jest.fn(),
+    recordRepairsSpent: jest.fn(),
+    recordAccepted: jest.fn(),
+    recordRenderSession: jest.fn(),
+    recordPageCount: jest.fn(),
+  };
   const ctx = {
     agent,
     meter,
     run,
     emit,
     deadline,
+    diagnostics,
     logger,
   } as unknown as StepContext;
 
@@ -93,7 +104,7 @@ const makeStep = () => {
 
   return {
     ctx,
-    mocks: { agent, meter, run, emit, deadline },
+    mocks: { agent, meter, run, emit, deadline, diagnostics },
     fixtures: { state, documentState, definition },
   };
 };
@@ -337,6 +348,16 @@ describe('generateStep', () => {
         });
         expect(mocks.agent.generateDocument).not.toHaveBeenCalled();
         expect(mocks.agent.repairDocument).not.toHaveBeenCalled();
+      });
+
+      it('should report the checkpoint to the diagnostics', async () => {
+        await generateStep(fixtures.documentState, ctx);
+
+        expect(mocks.diagnostics.recordAccepted).toHaveBeenCalledWith(
+          REPAIRED,
+          1,
+        );
+        expect(mocks.diagnostics.recordRepairsSpent).toHaveBeenCalledWith(1);
       });
 
       it('should bill nothing, check nothing, and announce no draft', async () => {
@@ -694,6 +715,45 @@ describe('generateStep', () => {
         amount: 0.05,
         detail: { model: 'test/generation-model', totalTokens: 150 },
       });
+    });
+
+    it("should report every model turn's output tokens and finish reason to the diagnostics", async () => {
+      mocks.agent.generateDocument.mockImplementation(
+        (_input: unknown, hooks: AgentHooks) => {
+          hooks.onUsage?.(
+            turnUsage({ completionTokens: 6000, finishReason: 'stop' }),
+          );
+          return Promise.resolve(draft);
+        },
+      );
+
+      await generateStep(fixtures.documentState, ctx);
+
+      expect(mocks.diagnostics.recordModelTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          completionTokens: 6000,
+          finishReason: 'stop',
+        }),
+      );
+    });
+
+    it('should report the static check and the Repairs spent to the diagnostics', async () => {
+      mockedCheck.mockReturnValueOnce([finding]).mockReturnValueOnce([]);
+      mocks.agent.generateDocument.mockResolvedValue({
+        ...draft,
+        envelopeRepairs: 1,
+      });
+
+      await generateStep(fixtures.documentState, ctx);
+
+      expect(mocks.diagnostics.recordCheck.mock.calls).toEqual([
+        ['static', draft.html, [finding]],
+        ['static', REPAIRED, []],
+      ]);
+      expect(mocks.diagnostics.recordRepairsSpent.mock.calls).toEqual([
+        [1],
+        [2],
+      ]);
     });
 
     it('should fail terminally when RESOLVE_INPUT left no Design System', async () => {

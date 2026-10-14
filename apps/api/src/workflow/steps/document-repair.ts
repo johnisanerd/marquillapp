@@ -13,7 +13,7 @@ import {
 import { USAGE_KINDS } from '../../feature-gating/credit-meter.constants';
 import { RunEventType } from '../engine/run-event.types';
 import { terminal } from '../engine/workflow.error';
-import type { StepContext } from '../engine/workflow.types';
+import type { DocumentCheck, StepContext } from '../engine/workflow.types';
 import {
   DOCUMENT_REPAIR_BUDGET,
   FailureCode,
@@ -50,13 +50,35 @@ export interface RepairedCandidate {
  * credit count climbs while the run is still in flight.
  */
 export const meteredHooks = (ctx: StepContext): AgentHooks => ({
-  onUsage: (usage) =>
+  onUsage: (usage) => {
     ctx.meter.record({
       kind: USAGE_KINDS.LLM,
       amount: usage.cost,
       detail: { model: usage.model, totalTokens: usage.totalTokens },
-    }),
+    });
+    ctx.diagnostics.recordModelTurn(usage);
+  },
 });
+
+/**
+ * Records one check of a Candidate Source: its codes and counts in the run's
+ * diagnostics, then its full violation list on the run. In that order, so a
+ * failed write still leaves the outcome in the diagnostics.
+ */
+export async function recordCheck(
+  ctx: StepContext,
+  phase: DocumentCheck['phase'],
+  candidate: string,
+  violations: Violation[],
+): Promise<void> {
+  ctx.diagnostics.recordCheck(phase, candidate, violations);
+  await ctx.run.recordDocumentCheck({
+    phase,
+    candidateSha256: sha256Hex(candidate),
+    violations,
+    checkedAt: new Date(),
+  });
+}
 
 /**
  * Static-checks the Candidate Source and repairs it until it is clean or the
@@ -123,10 +145,9 @@ export async function repair(
       meteredHooks(ctx),
     ),
   );
-  return {
-    candidate: repaired.html,
-    repairsSpent: round + repaired.envelopeRepairs,
-  };
+  const spent = round + repaired.envelopeRepairs;
+  ctx.diagnostics.recordRepairsSpent(spent);
+  return { candidate: repaired.html, repairsSpent: spent };
 }
 
 /** A model call may spend at most one Zod repair turn, and only if one is left. */
@@ -167,11 +188,6 @@ async function checkStatically(
   candidate: string,
 ): Promise<Violation[]> {
   const violations = check(definition, candidate);
-  await ctx.run.recordDocumentCheck({
-    phase: 'static',
-    candidateSha256: sha256Hex(candidate),
-    violations,
-    checkedAt: new Date(),
-  });
+  await recordCheck(ctx, 'static', candidate, violations);
   return violations;
 }

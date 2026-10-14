@@ -38,6 +38,13 @@ export const DOCUMENT_RUN_DEADLINE_MS = 6 * 60 * 1000;
 export const RENDER_RETRY_DELAY_MS = 2000;
 
 /**
+ * How long a DOCUMENT run keeps Candidate Source text (spec §11.5): the
+ * `acceptedCandidate` checkpoint and a failed run's last candidate. The run
+ * record and its check outcomes are kept indefinitely.
+ */
+export const CANDIDATE_SOURCE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
  * The stable code `run.failed` carries beside `failureReason`, and that a failed
  * Attempt stores (document generation spec §7.8). POST and POLL emit only
  * `internal`; the DOCUMENT codes arrive with the document pipeline.

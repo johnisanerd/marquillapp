@@ -93,6 +93,8 @@ async function generateDocument(
   const accepted = await ctx.run.readAcceptedCandidate();
   if (accepted) {
     ctx.logger.log(`GENERATE resumed ${label} from its accepted candidate`);
+    ctx.diagnostics.recordAccepted(accepted.candidate, accepted.repairsSpent);
+    ctx.diagnostics.recordRepairsSpent(accepted.repairsSpent);
     return {
       ...(accepted.title !== undefined
         ? { generatedTitle: accepted.title }
@@ -129,6 +131,7 @@ async function generateDocument(
     ),
   );
 
+  ctx.diagnostics.recordRepairsSpent(draft.envelopeRepairs);
   const { candidate, repairsSpent } = await repairStatically(
     {
       ctx,

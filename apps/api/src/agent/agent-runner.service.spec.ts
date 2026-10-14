@@ -20,6 +20,7 @@ jest.mock(
   { virtual: true },
 );
 
+import { Logger } from '@nestjs/common';
 import { ArtifactType } from 'src/database/schemas';
 import { z } from 'zod';
 import { LLMError } from '../llm/errors';
@@ -583,6 +584,9 @@ describe('AgentRunnerService', () => {
       ).rejects.toBeInstanceOf(DocumentTruncatedError);
       expect(mocks.llmService.complete).toHaveBeenCalledTimes(1);
       expect(onUsage).toHaveBeenCalledTimes(1);
+      expect(onUsage).toHaveBeenCalledWith(
+        expect.objectContaining({ finishReason: 'length' }),
+      );
     });
 
     it('should repair an invalid envelope once, report the turn, and meter both turns', async () => {
@@ -597,6 +601,25 @@ describe('AgentRunnerService', () => {
       expect(onUsage).toHaveBeenCalledTimes(2);
       const repairPrompt = messagesOfCall(2).at(-1)?.content ?? '';
       expect(repairPrompt).toContain('rejected');
+    });
+
+    it('should log the envelope repair without the model output when the draft is invalid', async () => {
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      mocks.llmService.complete
+        .mockResolvedValueOnce(
+          completion('{"html": "<section>SECRET SOURCE</section>"', 0.03),
+        )
+        .mockResolvedValueOnce(completion(draftJson(), 0.04));
+
+      await service.generateDocument(documentInput);
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('failed envelope validation'),
+      );
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('SECRET SOURCE');
+      warn.mockRestore();
     });
 
     it('should throw ContentValidationError when the repair is invalid too', async () => {
