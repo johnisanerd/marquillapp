@@ -36,7 +36,7 @@ limit); a healthy eval takes much less.
 2. **Design Systems seeded:** `bun run seed:design-systems`. The six launch systems must all be `ACTIVE`
    and listed; the script refuses to start otherwise. An unlisted system cannot be evaluated, so run the
    eval before listing decisions land.
-3. **Tiers seeded**, so a default Tier exists (the eval user sits on it).
+3. **Tiers seeded** (`bun run seed:tiers:temp`), so the eval user has a Tier to subscribe to.
 4. **A worker running against the same MongoDB and Redis**, started separately:
    ```bash
    cd apps/api
@@ -67,13 +67,19 @@ and ends, and run ids are printed at launch, so a crashed script can be picked u
 ### The eval user and credits
 
 The runs belong to `eval@marquill.internal` ("Document Eval"): a Mongo-only `User` with no `clerkId`, so
-it cannot sign in, and nothing is created in Clerk. It has no Subscription, so it sits on the default
-Tier (Free in the tier seeds, 120 credits a month).
+it cannot sign in, and nothing is created in Clerk.
 
-Credit gating (`FeatureGatingService.assertBalance`) refuses a launch once the user's `credits` Usage for the period
-reaches the Tier's limit. Twenty document runs would exceed the Free allowance, so before **each launch**
-the script deletes that one user's `credits` Usage rows. It never touches any other user, and a run's own
-credits are read from its diagnostics, which the reset does not affect.
+Credit gating (`FeatureGatingService.assertBalance`) refuses a run once the user's `credits` Usage for the
+period reaches the Tier's limit, and it checks twice: when the script launches the run, and again when the
+worker starts it. Twenty document runs would exceed the Free allowance (120 credits), and the worker starts
+the next queued run the moment the last one settles, so resetting before launch alone can lose that race.
+So the script does both:
+
+- it upserts an **active Subscription** for the eval user on the active Tier with the most credits
+  (Pro Writer, 30,000, in the tier seeds), valid for a year from each run of the script. It is a Mongo
+  document with no Paddle or Polar id, so no billing webhook can touch it;
+- before **each launch** it deletes that one user's `credits` Usage rows. It never touches any other user, and
+  a run's own credits are read from its diagnostics, which the reset does not affect.
 
 The user and its runs stay in the database. Re-running the eval reuses the user.
 

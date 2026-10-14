@@ -2,14 +2,26 @@ import type { INestApplicationContext } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ArtifactGenerationService } from '../../artifact/artifact-generation.service';
-import { Artifact, Tier, Usage, User } from '../../database/schemas';
+import {
+  Artifact,
+  BillingInterval,
+  Subscription,
+  SubscriptionStatus,
+  Tier,
+  Usage,
+  User,
+} from '../../database/schemas';
 import { DEFAULT_DESIGN_SYSTEM_ID } from '../../design-system/design-system.constants';
 import { DesignSystemsService } from '../../design-system/design-systems.service';
 import { DocumentMetricsService } from '../../diagnostics/document-metrics.service';
 import { FEATURE_KEYS } from '../../feature-gating/feature-gating.constants';
 import { getSignedUrl } from '../../s3';
 import { WorkflowRunService } from '../../workflow/workflow-run.service';
-import { ensureEvalAccount, type EvalAccountStore } from './eval-account';
+import {
+  ensureEvalAccount,
+  topCreditTierId,
+  type EvalAccountStore,
+} from './eval-account';
 import { findCoverKey } from './eval-covers';
 import { createEvalGeneration } from './eval-generation';
 import type { EvalDeps } from './eval-runner';
@@ -29,6 +41,7 @@ export async function createEvalDeps(
   const users = model<User>(User.name);
   const tiers = model<Tier>(Tier.name);
   const usage = model<Usage>(Usage.name);
+  const subscriptions = model<Subscription>(Subscription.name);
   const artifacts = model<Artifact>(Artifact.name);
 
   const accountStore: EvalAccountStore = {
@@ -36,11 +49,14 @@ export async function createEvalDeps(
       const user = await users.findOne({ email }, { _id: 1 }).lean();
       return user?._id.toString();
     },
-    findDefaultTierId: async () => {
-      const tier = await tiers
-        .findOne({ isDefault: true, isActive: true }, { _id: 1 })
-        .lean();
-      return tier?._id.toString();
+    findTopCreditTierId: async () => {
+      const active = await tiers.find({ isActive: true }, { limits: 1 }).lean();
+      return topCreditTierId(
+        active.map((tier) => ({
+          id: tier._id.toString(),
+          credits: tier.limits?.credits ?? 0,
+        })),
+      );
     },
     // No `clerkId` and no Clerk call: this user cannot sign in.
     createUser: async ({ email, name, tierId }) => {
@@ -50,6 +66,22 @@ export async function createEvalDeps(
         tier: new Types.ObjectId(tierId),
       });
       return user._id.toString();
+    },
+    upsertSubscription: async ({ userId, tierId, periodStart, periodEnd }) => {
+      await subscriptions.updateOne(
+        { userId: new Types.ObjectId(userId) },
+        {
+          $set: {
+            tierId: new Types.ObjectId(tierId),
+            billingInterval: BillingInterval.YEARLY,
+            status: SubscriptionStatus.ACTIVE,
+            currentPeriodStart: periodStart,
+            currentPeriodEnd: periodEnd,
+            cancelAtPeriodEnd: false,
+          },
+        },
+        { upsert: true },
+      );
     },
     deleteCreditUsage: async (userId) => {
       await usage.deleteMany({

@@ -16,9 +16,11 @@
  * an automatic gate fails. See docs/document-eval-runbook.md.
  *
  * The runs belong to a dedicated Mongo-only user (`eval@marquill.internal`,
- * no `clerkId`, nothing in Clerk) on the default Tier. Before each launch the
- * script zeroes that one user's `credits` Usage, so credit gating never stops
- * the 20 runs; research is off for every run.
+ * no `clerkId`, nothing in Clerk). It gets an active Subscription row (no
+ * Paddle or Polar id) on the Tier with the most credits, and before each
+ * launch the script zeroes that one user's `credits` Usage, so credit gating
+ * never stops the 20 runs, including the worker's own check when it starts
+ * the next queued run. Research is off for every run.
  */
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
