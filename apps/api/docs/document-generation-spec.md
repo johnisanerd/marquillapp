@@ -319,8 +319,9 @@ describes it, so the generation prompt and the prompt fragment state its contrac
   descendants. A layer on an *unpositioned* wrapper with `position: absolute; inset: 0; z-index: -1`
   therefore covers the whole page, safe area included: the recipe for a full-page bleed or colour.
   (On a `position: relative` wrapper the offsets would have to be minus the safe area instead.)
-- Text is black until `color` is set, and an icon takes `color` from itself: the model sets it on
-  the wrapper and on each `svg`. It uses only characters the declared fonts cover.
+- Text is black until `color` is set, and `icons.colors` judges the colour an `svg` inherits: the
+  model sets `color` on the wrapper and on each `svg`, the latter from the ICONS colours. It uses
+  only characters the declared fonts cover.
 - A page is exactly `<section class="page" data-role="…">`. The prompt names `*`, `body > *`,
   `html *` and `:is()`/`:where()` lists as page-matching selectors and gives `.page *` as the
   allowed reset; the `envelope.css.pageSelector` detail repeats that for a universal selector. The

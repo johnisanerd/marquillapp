@@ -34,6 +34,14 @@ const roleConstraints = ({
   return constraints.length > 0 ? ` (${constraints.join(', ')})` : '';
 };
 
+/** The page minus its safe area: what a `height: 100%` wrapper fills. */
+const usableBox = ({
+  width,
+  height,
+  safeArea,
+}: DesignSystemDefinition['page']) =>
+  `${width - safeArea.left - safeArea.right}x${height - safeArea.top - safeArea.bottom}px`;
+
 function buildPromptFragment(ds: DesignSystemDefinition): string {
   const p = ds.page;
   const t = ds.typography;
@@ -44,7 +52,7 @@ ${ds.summary}
 ${oneLine(ds.intent)}
 
 PAGE
-- Every page is exactly ${p.width}x${p.height}px. The app already pads every page by the safe area (${p.safeArea.top}px top, ${p.safeArea.right}px right, ${p.safeArea.bottom}px bottom, ${p.safeArea.left}px left), so the usable box is ${p.width - p.safeArea.left - p.safeArea.right}x${p.height - p.safeArea.top - p.safeArea.bottom}px. Content stays inside it.
+- Every page is exactly ${p.width}x${p.height}px. The app already pads every page by the safe area (${p.safeArea.top}px top, ${p.safeArea.right}px right, ${p.safeArea.bottom}px bottom, ${p.safeArea.left}px left), so the usable box is ${usableBox(p)}. Content stays inside it.
 - The document has ${p.pages.min} to ${p.pages.max} pages. Default page ground is ${p.background}.
 
 COLOUR — declare these tokens once in :root, then reference them only as var(--ds-<token>)
