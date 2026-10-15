@@ -242,4 +242,12 @@ describe('formatEvalReport', () => {
     expect(report).toContain('NOT_RUN');
     expect(report).toContain('no READY run left to refine');
   });
+
+  it('should print the requested page count in the runs table', () => {
+    const report = formatEvalReport(makeResult());
+
+    expect(report).toMatch(/run\s+pages\s+state\s+run id\s+note/);
+    expect(report).toMatch(/margin\/4p\s+4\s+COMPLETED/);
+    expect(report).toMatch(/margin\/8p\s+8\s+COMPLETED/);
+  });
 });

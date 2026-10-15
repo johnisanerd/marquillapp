@@ -271,6 +271,23 @@ describe('evaluateEval', () => {
       ).toBe(true);
     });
 
+    it('should group capped 12-page runs separately from uncapped 15-page runs', () => {
+      const clean = makeCleanEval();
+      const afterglow15 = clean.records.find(
+        (r) => r.runId === 'afterglow-15',
+      )!;
+      afterglow15.requestedPages = 12;
+
+      clean.rows.find((r) => r.runId === 'afterglow-15')!.credits = 100;
+      clean.rows.find((r) => r.runId === 'margin-15')!.credits = 500;
+      clean.rows.find((r) => r.runId === 'broadside-15')!.credits = 500;
+
+      const result = gate(evaluate(clean.records, clean.rows), 'cost-spread');
+      expect(result.pass).toBe(true);
+      expect(result.detail).toContain('12 pages: 100–100 credits');
+      expect(result.detail).toContain('15 pages: 500–500 credits');
+    });
+
     it('should ignore failed runs', () => {
       const clean = makeCleanEval();
       fail(clean, 'margin-4');

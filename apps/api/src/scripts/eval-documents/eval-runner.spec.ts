@@ -85,6 +85,16 @@ const makeEval = (
       listActive: jest.fn(() =>
         (config.systems ?? SYSTEMS).map((id) => ({ id })),
       ),
+      getActive: jest.fn((id: string) => ({
+        id,
+        definition: {
+          page: {
+            pages: {
+              max: id === 'margin' || id === 'schematic' ? 15 : 12,
+            },
+          },
+        },
+      })),
     },
     account: {
       userId: 'eval-user',
@@ -301,7 +311,9 @@ describe('runDocumentEval', () => {
 
   it('should fail the gates when two runs fail', async () => {
     const { run } = makeEval({
-      failing: (launch) => launch.kind === 'INITIAL' && launch.pages === 15,
+      failing: (launch) =>
+        launch.kind === 'INITIAL' &&
+        (launch.pages === 15 || launch.pages === 12),
     });
 
     const result = await run();
@@ -363,6 +375,27 @@ describe('runDocumentEval', () => {
       { key: 'refine/carry-pin', state: 'COMPLETED' },
       { key: 'refine/switch-system', state: 'NOT_RUN' },
     ]);
+  });
+
+  it("should clamp a refine's requestedPages to the target system's pages.max", async () => {
+    // Keep margin/4p and margin/15p READY so refine/switch-system starts from margin/15p
+    const { run } = makeEval({
+      failing: (launch) =>
+        launch.kind === 'INITIAL' &&
+        !(
+          launch.designSystemId === 'margin' &&
+          (launch.pages === 4 || launch.pages === 15)
+        ),
+    });
+
+    const result = await run();
+
+    const switchRefine = result.records.find(
+      (r) => r.key === 'refine/switch-system',
+    );
+    expect(switchRefine?.sourceKey).toBe('margin/15p');
+    expect(switchRefine?.requestedDesignSystemId).toBe('afterglow');
+    expect(switchRefine?.requestedPages).toBe(12);
   });
 
   it('should record a launch failure and carry on', async () => {

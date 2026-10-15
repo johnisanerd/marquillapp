@@ -6,6 +6,7 @@ import type { DocumentMetricsQuery } from '../../diagnostics/document-metrics.se
 import {
   buildEvalMatrix,
   switchTarget,
+  type EvalSystem,
   type RefineEvalEntry,
 } from './eval-matrix';
 import { evaluateEval, type EvalEvaluation } from './eval-gates';
@@ -44,7 +45,10 @@ export interface EvalGeneration {
  * the real services; tests pass fakes.
  */
 export interface EvalDeps {
-  designSystems: { listActive(): { id: string }[] };
+  designSystems: {
+    listActive(): { id: string }[];
+    getActive(id: string): { definition: { page: { pages: { max: number } } } };
+  };
   defaultDesignSystemId: string;
   /** The Mongo-only eval user whose runs these are. */
   account: { userId: string; resetCredits(): Promise<void> };
@@ -110,7 +114,14 @@ export async function runDocumentEval(
   const designSystemIds = deps.designSystems.listActive().map(({ id }) => id);
   assertLaunchSet(designSystemIds, deps.defaultDesignSystemId);
 
-  const matrix = buildEvalMatrix(designSystemIds);
+  const systems: EvalSystem[] = designSystemIds.map((id) => ({
+    id,
+    maxPages: deps.designSystems.getActive(id).definition.page.pages.max,
+  }));
+  const maxPages = new Map(
+    systems.map((system) => [system.id, system.maxPages]),
+  );
+  const matrix = buildEvalMatrix(systems);
   const records: EvalRunRecord[] = matrix.initial.map((entry) => ({
     key: entry.key,
     kind: 'INITIAL',
@@ -134,7 +145,7 @@ export async function runDocumentEval(
   // time, so the two Refinements start from the first two distinct READY runs.
   const ready = records.filter((record) => record.state === 'COMPLETED');
   const refinements = matrix.refine.map((entry, index) =>
-    refineRecord(entry, ready[index], designSystemIds),
+    refineRecord(entry, ready[index], designSystemIds, maxPages),
   );
   records.push(...refinements.map(({ record }) => record));
   await runPool(refinements, options.concurrency, async (refinement) => {
@@ -228,16 +239,24 @@ function refineRecord(
   entry: RefineEvalEntry,
   source: EvalRunRecord | undefined,
   designSystemIds: string[],
+  maxPages: ReadonlyMap<string, number>,
 ): RefineLaunch {
   const designSystemId =
     entry.mode === 'switch' && source?.requestedDesignSystemId
       ? switchTarget(designSystemIds, source.requestedDesignSystemId)
       : undefined;
+  // A Refinement asks for no page count of its own; the record shows the
+  // source's, held to the cap of the system it switches to.
+  const requestedPages = Math.min(
+    source?.requestedPages ?? 0,
+    (designSystemId && maxPages.get(designSystemId)) || Infinity,
+  );
+
   const record: EvalRunRecord = {
     key: entry.key,
     kind: 'REFINE',
     requestedDesignSystemId: designSystemId,
-    requestedPages: source?.requestedPages ?? 0,
+    requestedPages,
     sourceKey: source?.key,
     state: 'NOT_RUN',
     ...(source ? {} : { error: 'no READY run left to refine' }),

@@ -1,8 +1,8 @@
-import { EVAL_BRIEFS, EVAL_REFINE_FEEDBACK, type EvalBrief } from './briefs';
+import { briefsForSystem, EVAL_REFINE_FEEDBACK } from './briefs';
 
 export interface InitialEvalEntry {
   kind: 'INITIAL';
-  /** Stable name for the run in reports: `<system>/<pages>p`. */
+  /** Stable name for the run in reports: `<system>/<pages>p`, the pages actually requested. */
   key: string;
   designSystemId: string;
   pages: number;
@@ -28,22 +28,26 @@ export interface EvalMatrix {
   refine: RefineEvalEntry[];
 }
 
+/** A listed Design System and the most pages its definition allows (`page.pages.max`). */
+export interface EvalSystem {
+  id: string;
+  maxPages: number;
+}
+
 /**
  * The fixed matrix of the pre-rollout eval (spec §11.3): every listed system
  * against every brief, then one Refinement that carries the pin and one that
  * switches system. The order is deterministic: systems in the order given,
- * briefs from shortest to longest.
+ * briefs from shortest to longest. The long brief asks for
+ * `min(15, maxPages)` pages (#194), and the key names that count.
  */
-export function buildEvalMatrix(
-  designSystemIds: readonly string[],
-  briefs: readonly EvalBrief[] = EVAL_BRIEFS,
-): EvalMatrix {
-  const initial = designSystemIds.flatMap((designSystemId) =>
-    briefs.map(
+export function buildEvalMatrix(systems: readonly EvalSystem[]): EvalMatrix {
+  const initial = systems.flatMap(({ id, maxPages }) =>
+    briefsForSystem(maxPages).map(
       (brief): InitialEvalEntry => ({
         kind: 'INITIAL',
-        key: `${designSystemId}/${brief.pages}p`,
-        designSystemId,
+        key: `${id}/${brief.pages}p`,
+        designSystemId: id,
         pages: brief.pages,
         prompt: brief.prompt,
       }),
