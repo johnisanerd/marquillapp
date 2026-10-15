@@ -226,6 +226,103 @@ describe('renderDocumentSession', () => {
   });
 });
 
+describe('phase trace', () => {
+  const never = () => new Promise<never>(() => undefined);
+  const hangs: [phase: string, hang: () => void][] = [
+    ['connect', () => connect.mockReturnValue(never())],
+    ['setup', () => mocks.browser.newPage.mockReturnValue(never())],
+    ['load', () => mocks.page.setContent.mockReturnValue(never())],
+    ['probe', () => mocks.page.evaluate.mockReturnValue(never())],
+    [
+      'fontPass',
+      () =>
+        mocks.cdp.send.mockImplementation((method: string) =>
+          method === 'DOM.getDocument' ? never() : Promise.resolve({}),
+        ),
+    ],
+    ['cover', () => mocks.page.screenshot.mockReturnValue(never())],
+    ['pdf', () => mocks.page.pdf.mockReturnValue(never())],
+  ];
+
+  it.each(hangs)(
+    'should name %s as the phase when the session hangs there',
+    async (phase, hang) => {
+      hang();
+
+      const result = await renderDocumentSession('ws://b', definition, '', {
+        deadlineMs: 20,
+      });
+
+      expect(result.facts.timedOut).toBe(true);
+      expect(result.trace.phase).toBe(phase);
+      expect(result.trace.phaseMs[phase as 'pdf']).toBeGreaterThanOrEqual(15);
+    },
+  );
+
+  it('should time every phase the hung session passed through', async () => {
+    mocks.page.evaluate.mockReturnValue(never());
+
+    const { trace } = await renderDocumentSession('ws://b', definition, '', {
+      deadlineMs: 20,
+    });
+
+    expect(Object.keys(trace.phaseMs)).toEqual([
+      'connect',
+      'setup',
+      'load',
+      'probe',
+    ]);
+  });
+
+  it('should record the timing of each phase when the session passes', async () => {
+    const result = await renderDocumentSession('ws://b', definition, '');
+
+    expect(result.facts.timedOut).toBe(false);
+    expect(result.trace.phase).toBe('pdf');
+    expect(Object.keys(result.trace.phaseMs)).toEqual([
+      'connect',
+      'setup',
+      'load',
+      'probe',
+      'fontPass',
+      'cover',
+      'pdf',
+    ]);
+  });
+
+  it('should keep the trace of a session that connects after the deadline', async () => {
+    let finishConnect: (b: unknown) => void = () => undefined;
+    connect.mockReturnValue(
+      new Promise((resolve) => {
+        finishConnect = resolve;
+      }),
+    );
+
+    const result = await renderDocumentSession('ws://b', definition, '', {
+      deadlineMs: 5,
+    });
+    const before = JSON.stringify(result.trace);
+    finishConnect(mocks.browser);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(result.trace.phase).toBe('connect');
+    expect(JSON.stringify(result.trace)).toBe(before);
+  });
+
+  it('should carry the phase a failed session reached on the RenderSessionError', async () => {
+    mocks.page.evaluate.mockRejectedValue(new Error('Protocol error'));
+
+    const error = await renderDocumentSession('ws://b', definition, '').catch(
+      (e: unknown) => e,
+    );
+
+    expect((error as RenderSessionError).trace?.phase).toBe('probe');
+    expect(
+      Object.keys((error as RenderSessionError).trace?.phaseMs ?? {}),
+    ).toEqual(['connect', 'setup', 'load', 'probe']);
+  });
+});
+
 describe('browserlessEndpoint', () => {
   it('should build a WebSocket URL with the token and a backstop timeout', () => {
     expect(

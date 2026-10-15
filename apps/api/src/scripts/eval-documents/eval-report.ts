@@ -134,10 +134,20 @@ function bucketDetail(
   return [
     `${prefix}Failure codes: ${failures.length === 0 ? 'none' : failures.map(([code, count]) => `${code}: ${count}`).join(', ')}`,
     `${prefix}Repair rounds (runs per rounds spent): ${JSON.stringify(bucket.repairRounds)}`,
+    `${prefix}Render timeouts by phase: ${timeouts(bucket.renderSessions.timeoutsByPhase)}`,
     `${prefix}Top static violations: ${violations(bucket.violations.static)}`,
     `${prefix}Top render violations: ${violations(bucket.violations.render)}`,
     `${prefix}First-candidate pass rate: ${percent(first.passRate)} (${first.passed} of ${first.runs}) — recorded, not gated`,
   ];
+}
+
+function timeouts(
+  byPhase: DocumentMetricsBucket['renderSessions']['timeoutsByPhase'],
+): string {
+  const entries = Object.entries(byPhase);
+  return entries.length === 0
+    ? 'none'
+    : entries.map(([phase, count]) => `${phase}: ${count}`).join(', ');
 }
 
 function bucketRow(scope: string, bucket: DocumentMetricsBucket): string[] {
