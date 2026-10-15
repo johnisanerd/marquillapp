@@ -10,11 +10,14 @@ export const API_BASE =
 
 export class ApiRequestError extends Error {
   status: number;
+  /** The API's stable error `code`, when the body carries one (e.g. `design_system.unavailable`). */
+  code?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = "ApiRequestError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -64,7 +67,11 @@ export async function readApi<T>(input: string, init: RequestInit = {}) {
       payload && typeof payload === "object" && payload !== null && "message" in payload
         ? String((payload as { message?: unknown }).message ?? "")
         : text;
-    throw new ApiRequestError(message || `Request failed with ${response.status}.`, response.status);
+    const code =
+      payload && typeof payload === "object" && "code" in payload && typeof payload.code === "string"
+        ? payload.code
+        : undefined;
+    throw new ApiRequestError(message || `Request failed with ${response.status}.`, response.status, code);
   }
   return payload as T;
 }
