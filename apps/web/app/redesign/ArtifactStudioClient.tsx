@@ -22,9 +22,17 @@ import type {
   SubscriptionTier,
   UserProfile,
 } from "../lib/types";
-import type { ArtifactType, CreateArtifactResponse } from "./artifactTypes";
-import { readArtifactPrompt, storeArtifactPrompt } from "./artifactStudioStorage";
-import { API_BASE, jsonRequest, readApi } from "./api";
+import type { ArtifactType } from "./artifactTypes";
+import {
+  readArtifactDesignSystem,
+  readArtifactPrompt,
+  storeArtifactDesignSystem,
+  storeArtifactPrompt,
+} from "./artifactStudioStorage";
+import { createArtifactBody, createArtifactRequest } from "./artifactRequests";
+import DesignSystemPicker, { DesignSystemTrigger } from "./DesignSystemPicker";
+import { resolveDesignSystemId } from "./designSystems";
+import useDesignSystems from "./useDesignSystems";
 import RedesignShell from "./Shell";
 import { canUseResearch } from "./tier-access";
 
@@ -68,16 +76,24 @@ export default function ArtifactStudioClient({
   const [prompt, setPrompt] = useState("");
   const [withResearch, setWithResearch] = useState(false);
   const [stylePreset, setStylePreset] = useState<StylePreset>(StylePreset.PROFESSIONAL);
+  const [pickedDesignSystemId, setPickedDesignSystemId] = useState<string>();
+  const [isDesignPickerOpen, setIsDesignPickerOpen] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [creationError, setCreationError] = useState<string | null>(null);
   const researchAvailable = canUseResearch(subscription ?? user.tier);
   const isReady = Boolean(type && prompt.trim());
   const selectedArtifact = artifactOptions.find((option) => option.type === type);
+  const designSystems = useDesignSystems(type === "DOCUMENT");
+  // A failed or empty list leaves no choice to make: no id is sent and the API uses `margin`.
+  const designSystemId = resolveDesignSystemId(designSystems.systems, pickedDesignSystemId);
+  const selectedDesignSystem = designSystems.systems.find((system) => system.id === designSystemId);
 
   useEffect(() => {
     if (!restoreKey) return;
     const restoredPrompt = readArtifactPrompt(restoreKey);
     if (restoredPrompt) setPrompt(restoredPrompt.slice(0, 2000));
+    // An id the list no longer offers falls back to the default in resolveDesignSystemId.
+    setPickedDesignSystemId(readArtifactDesignSystem(restoreKey));
   }, [restoreKey]);
 
   async function createArtifact(event: FormEvent<HTMLFormElement>) {
@@ -88,19 +104,18 @@ export default function ArtifactStudioClient({
     setCreationError(null);
     setIsCreating(true);
     try {
-      const response = await readApi<CreateArtifactResponse>(
-        `${API_BASE}/artifacts`,
-        jsonRequest({
-          type,
-          prompt: trimmedPrompt,
-          withResearch: researchAvailable && withResearch,
-          ...(type === "POST" ? { stylePreset } : {}),
-        }, { method: "POST" }),
-      );
+      const response = await createArtifactRequest(createArtifactBody({
+        type,
+        prompt: trimmedPrompt,
+        withResearch: researchAvailable && withResearch,
+        stylePreset,
+        designSystemId,
+      }));
       if (!response?.artifactId || !response.runId) {
         throw new Error("The artifact run could not be started.");
       }
       storeArtifactPrompt(response.artifactId, trimmedPrompt);
+      storeArtifactDesignSystem(response.artifactId, type === "DOCUMENT" ? designSystemId : undefined);
       router.push(`/artifacts/${encodeURIComponent(response.artifactId)}?run=${encodeURIComponent(response.runId)}`);
     } catch (reason) {
       setCreationError(
@@ -183,6 +198,18 @@ export default function ArtifactStudioClient({
                 </div>
 
                 <div className="mq-artifact-prompt-controls">
+                  {type === "DOCUMENT" && designSystems.state.status === "loading" ? (
+                    <span className="mq-design-status" role="status">Loading designs…</span>
+                  ) : null}
+                  {type === "DOCUMENT" && selectedDesignSystem ? (
+                    <DesignSystemTrigger
+                      label={selectedDesignSystem.name}
+                      isOpen={isDesignPickerOpen}
+                      onToggle={() => setIsDesignPickerOpen((current) => !current)}
+                      controlsId="artifact-design-picker"
+                    />
+                  ) : null}
+
                   {type === "POST" ? (
                     <label className="mq-artifact-studio-select">
                       <PenLine size={14} />
@@ -224,6 +251,16 @@ export default function ArtifactStudioClient({
                   </button>
                 ))}
               </fieldset>
+            ) : null}
+
+            {type === "DOCUMENT" && selectedDesignSystem && isDesignPickerOpen ? (
+              <DesignSystemPicker
+                id="artifact-design-picker"
+                systems={designSystems.systems}
+                value={selectedDesignSystem.id}
+                onChange={setPickedDesignSystemId}
+                disabled={isCreating}
+              />
             ) : null}
 
             {creationError ? (

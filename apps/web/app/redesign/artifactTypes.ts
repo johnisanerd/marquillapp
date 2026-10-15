@@ -1,4 +1,5 @@
 import type { ArtifactContent, PollDurationDays } from "../lib/artifact-content";
+import type { StylePreset } from "../lib/types";
 export { POLL_DURATION_DAYS } from "../lib/artifact-content";
 export type { ArtifactContent, PollDurationDays } from "../lib/artifact-content";
 
@@ -37,6 +38,16 @@ export type LatestAttempt = {
   failureReason?: string;
   /** Absent only in the instant before the Attempt's run is recorded. */
   runId?: string;
+};
+
+export type CreateArtifactRequest = {
+  type: ArtifactType;
+  prompt: string;
+  withResearch: boolean;
+  /** POST only. */
+  stylePreset?: StylePreset;
+  /** DOCUMENT only: the Design System slug. Omitted means `margin`. */
+  designSystemId?: string;
 };
 
 export type CreateArtifactResponse = {

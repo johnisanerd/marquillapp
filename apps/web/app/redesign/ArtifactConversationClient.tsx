@@ -26,8 +26,6 @@ import type {
   ArtifactDetailData,
   ArtifactDetailResponse,
   ArtifactType,
-  RefineArtifactRequest,
-  RefineArtifactResponse,
   UpdateArtifactRequest,
 } from "./artifactTypes";
 import ArtifactDeleteConfirmModal from "./ArtifactDeleteConfirmModal";
@@ -48,6 +46,13 @@ import {
   jsonRequest,
   readApi,
 } from "./api";
+import { refineArtifactBody, refineArtifactRequest } from "./artifactRequests";
+import DesignSystemPicker, {
+  DesignSystemTrigger,
+  KEEP_DESIGN_SYSTEM,
+} from "./DesignSystemPicker";
+import { isDesignSystemUnavailable } from "./designSystems";
+import useDesignSystems from "./useDesignSystems";
 import RedesignShell from "./Shell";
 import { useArtifactRun } from "./useArtifactRun";
 import useArtifactPostDraft from "./useArtifactPostDraft";
@@ -82,6 +87,11 @@ export default function ArtifactConversationClient({
   const [feedback, setFeedback] = useState("");
   const [isStartingRefine, setIsStartingRefine] = useState(false);
   const [refineError, setRefineError] = useState<string | null>(null);
+  // "" keeps the Current Version's Design System; a slug switches to it.
+  const [refineDesignSystemId, setRefineDesignSystemId] = useState(KEEP_DESIGN_SYSTEM);
+  const [isRefineDesignOpen, setIsRefineDesignOpen] = useState(false);
+  // Set by a 409 `design_system.unavailable`: the refinement cannot keep its design.
+  const [designRequired, setDesignRequired] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [savingVersion, setSavingVersion] = useState<number | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
@@ -313,28 +323,44 @@ export default function ArtifactConversationClient({
     setIsAccountPickerOpen(true);
   }
 
+  const isDocument = artifactType === "DOCUMENT";
+  const designSystems = useDesignSystems(isHydrated && isDocument);
+  const selectedRefineDesign = designSystems.systems.find((system) => system.id === refineDesignSystemId);
+  const currentDesignName = responses
+    .findLast((entry) => entry.artifact.version === entry.artifact.currentVersion)
+    ?.artifact.content.document?.designSystemName;
+  const needsDesignChoice = designRequired && !refineDesignSystemId;
+
   async function startRefinement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedFeedback = feedback.trim();
-    if (!trimmedFeedback || !canRefine) return;
+    if (!trimmedFeedback || !canRefine || needsDesignChoice) return;
     setRefineError(null);
     setIsStartingRefine(true);
     try {
-      const response = await readApi<RefineArtifactResponse>(
-        `${API_BASE}/artifacts/${encodeURIComponent(artifactId)}/refine`,
-        // A document keeps its Design System; a 409 `design_system.unavailable`
-        // carries a message that is safe to show as the refine error.
-        jsonRequest({ feedback: trimmedFeedback } satisfies RefineArtifactRequest, { method: "POST" }),
+      const response = await refineArtifactRequest(
+        artifactId,
+        // Omitted, a refinement keeps its Design System pin.
+        refineArtifactBody(artifactType, trimmedFeedback, refineDesignSystemId || undefined),
       );
       if (!response?.runId || typeof response.version !== "number") {
         throw new Error("The refinement run could not be started.");
       }
       appendUser(trimmedFeedback, `feedback-${response.version}`);
       setFeedback("");
+      setRefineDesignSystemId(KEEP_DESIGN_SYSTEM);
+      setDesignRequired(false);
+      setIsRefineDesignOpen(false);
       beginRun("REFINE", artifactType);
       setActiveRunId(response.runId);
       router.replace(`${cleanArtifactUrl}?run=${encodeURIComponent(response.runId)}`);
     } catch (reason) {
+      if (isDesignSystemUnavailable(reason)) {
+        // The message is safe to show; the user must pick a system to retry with.
+        setDesignRequired(true);
+        setRefineDesignSystemId(KEEP_DESIGN_SYSTEM);
+        setIsRefineDesignOpen(true);
+      }
       setRefineError(reason instanceof Error ? reason.message : "The refinement run could not be started.");
     } finally {
       setIsStartingRefine(false);
@@ -450,6 +476,51 @@ export default function ArtifactConversationClient({
                 onRetryLoad={retryCompletedVersion}
               />
             ) : null}
+            {isDocument && responses.length ? (
+              <div className="mq-design-refine">
+                {designSystems.systems.length ? (
+                  <>
+                    <DesignSystemTrigger
+                      label={
+                        selectedRefineDesign
+                          ? selectedRefineDesign.name
+                          : designRequired
+                            ? "Choose a design"
+                            : "Design: keep current"
+                      }
+                      isOpen={isRefineDesignOpen}
+                      onToggle={() => setIsRefineDesignOpen((current) => !current)}
+                      disabled={!canRefine}
+                      controlsId="refine-design-picker"
+                    />
+                    {isRefineDesignOpen ? (
+                      <DesignSystemPicker
+                        id="refine-design-picker"
+                        systems={designSystems.systems}
+                        value={refineDesignSystemId}
+                        onChange={(designSystemId) => {
+                          setRefineDesignSystemId(designSystemId);
+                          if (designSystemId && designRequired) setRefineError(null);
+                        }}
+                        keepLabel={designRequired
+                          ? undefined
+                          : `Keep current design${currentDesignName ? ` (${currentDesignName})` : ""}`}
+                        disabled={!canRefine}
+                      />
+                    ) : null}
+                  </>
+                ) : designRequired ? (
+                  <p className="mq-design-status" role="status">
+                    {designSystems.state.status === "loading"
+                      ? "Loading designs…"
+                      : "The designs could not be loaded."}
+                    {designSystems.state.status === "loading" ? null : (
+                      <button type="button" onClick={() => void designSystems.reload()}>Try again</button>
+                    )}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <form className="mq-studio-refine" onSubmit={startRefinement}>
               <label htmlFor="artifact-feedback" className="sr-only">Reply to refine the artifact</label>
               <textarea
@@ -467,7 +538,8 @@ export default function ArtifactConversationClient({
               <div className="mq-studio-refine-actions">
                 <button
                   type="submit"
-                  disabled={!canRefine || !feedback.trim()}
+                  disabled={!canRefine || !feedback.trim() || needsDesignChoice}
+                  title={needsDesignChoice ? "Choose a design to refine with" : undefined}
                   aria-label="Refine artifact"
                 >
                   {isStartingRefine || activeRunId ? <LoaderCircle size={17} /> : <><Sparkles size={16} /> Refine</>}

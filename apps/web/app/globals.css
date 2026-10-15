@@ -614,6 +614,25 @@ html[data-theme="dark"] .mq-schedule-theme { --surface:#161614;--surface-2:#1e1e
 .mq-artifact-prompt-controls { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 8px; }
 .mq-artifact-studio-select { display: inline-flex; height: 34px; align-items: center; gap: 5px; padding: 0 4px 0 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--ink-500); }
 .mq-artifact-studio-select select { max-width: 132px; height: 31px; padding: 0 22px 0 2px; border: 0; outline: 0; background: transparent; color: var(--ink-700); font: 600 11.5px var(--font-inter); cursor: pointer; }
+.mq-design-trigger { display: inline-flex; height: 34px; max-width: 190px; align-items: center; gap: 6px; padding: 0 10px 0 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--ink-700); font: 600 11.5px var(--font-inter); cursor: pointer; }
+.mq-design-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mq-design-trigger svg { flex: none; color: var(--ink-500); }
+.mq-design-trigger[aria-expanded="true"] { border-color: var(--line-strong); background: var(--surface); }
+.mq-design-trigger:disabled { cursor: not-allowed; opacity: .5; }
+.mq-design-status { display: inline-flex; align-items: center; gap: 8px; margin: 0; color: var(--ink-400); font-size: 11.5px; }
+.mq-design-status button { padding: 0; border: 0; background: transparent; color: var(--ink-700); font: 600 11.5px var(--font-inter); text-decoration: underline; cursor: pointer; }
+.mq-design-picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 14px; }
+.mq-design-card { position: relative; display: flex; min-width: 0; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--surface) 74%, transparent); color: var(--ink-500); cursor: pointer; transition: border-color .18s ease, background-color .18s ease; }
+.mq-design-card:hover { border-color: var(--line-strong); background: var(--surface); }
+.mq-design-card.is-selected { border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 1px var(--accent); }
+.mq-design-card:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mq-design-card input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); opacity: 0; }
+.mq-design-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink-900); font-size: 12.5px; }
+.mq-design-card small { color: var(--ink-500); font-size: 11px; line-height: 1.45; }
+.mq-design-previews { display: flex; gap: 6px; margin-top: 2px; overflow-x: auto; }
+.mq-design-previews img { display: block; width: auto; height: 128px; flex: none; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); aspect-ratio: 540 / 675; object-fit: cover; }
+.mq-design-refine { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.mq-design-refine .mq-design-picker { width: 100%; max-height: min(46vh, 360px); margin-top: 0; padding: 10px; overflow-y: auto; border: 1px solid var(--line-strong); border-radius: 17px; background: var(--surface); box-shadow: var(--sh-lg); }
 .mq-artifact-submit { display: inline-flex; width: 36px; height: 36px; flex: none; align-items: center; justify-content: center; border: 0; border-radius: 50%; background: var(--canvas-sub); color: var(--ink-400); transition: background-color .18s ease, color .18s ease, transform .18s ease; }
 .mq-artifact-submit.is-ready { background: var(--ink-900); color: var(--surface); opacity: 1; }
 .mq-artifact-submit:disabled { cursor: not-allowed; }
@@ -1153,6 +1172,8 @@ html[data-theme="dark"] .mq-schedule-theme { --surface:#161614;--surface-2:#1e1e
   .mq-artifact-studio-select { min-width: 0; flex: 1; }
   .mq-artifact-studio-select select { width: 100%; max-width: none; }
   .mq-artifact-type-options { grid-template-columns: 1fr; gap: 7px; }
+  .mq-design-trigger { min-width: 0; flex: 1; max-width: none; }
+  .mq-design-picker { grid-template-columns: 1fr; }
   .mq-artifact-type-options button { min-height: 54px; }
   .mq-artifact-studio-note { max-width: 290px; }
   .mq-studio-conversation { min-height: calc(100vh - 120px); padding: 0 0 24px; }
