@@ -129,13 +129,13 @@ FRAME:
 - To bleed or colour the whole page, leave the wrapper unpositioned and give it
   a layer: \`.wrap::before { content: ''; position: absolute; inset: 0;
   z-index: -1; background: ...; }\` covers the whole page, safe area included;
-  a position on the wrapper would break that. An absolutely positioned element
-  with no positioned ancestor is placed against the page edge, not the safe
-  area.
+  a position or a background on the wrapper would break that. An absolutely
+  positioned element with no positioned ancestor is placed against the page
+  edge, not the safe area.
 - Text is black until you set a colour. Set color on the wrapper and on every
   svg. An svg uses the color it inherits, and that must be an ICONS colour.
 - Use only characters the declared fonts cover. Draw check marks and bullets
-  with a CSS shape or an allowed icon.
+  with a CSS shape: icons are capped per page.
 
 CONSTRAINTS:
 - Follow the DESIGN SYSTEM exactly. It is the only source of colours, type

@@ -43,7 +43,7 @@ describe('renderPromptFragment', () => {
     expect(fragment).toContain('usable box is 856x1126px');
   });
 
-  it('should derive the usable box from each side of the safe area', () => {
+  it('should derive the usable box when each side of the safe area differs', () => {
     const ds = load('margin');
 
     const fragment = renderPromptFragment({
