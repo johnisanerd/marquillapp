@@ -47,7 +47,7 @@ import {
   readApi,
 } from "./api";
 import { refineArtifactBody, refineArtifactRequest } from "./artifactRequests";
-import { KEEP_DESIGN_SYSTEM } from "./DesignSystemPicker";
+import { KEEP_DESIGN_SYSTEM } from "./DesignSystemMenu";
 import RefineDesignControl from "./RefineDesignControl";
 import { isDesignSystemUnavailable } from "./designSystems";
 import useDesignSystems from "./useDesignSystems";
@@ -87,7 +87,6 @@ export default function ArtifactConversationClient({
   const [refineError, setRefineError] = useState<string | null>(null);
   // "" keeps the Current Version's Design System; a slug switches to it.
   const [refineDesignSystemId, setRefineDesignSystemId] = useState(KEEP_DESIGN_SYSTEM);
-  const [isRefineDesignOpen, setIsRefineDesignOpen] = useState(false);
   // Set by a 409 `design_system.unavailable`: the refinement cannot keep its design.
   const [designUnavailableMessage, setDesignUnavailableMessage] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -347,7 +346,6 @@ export default function ArtifactConversationClient({
       setFeedback("");
       setRefineDesignSystemId(KEEP_DESIGN_SYSTEM);
       setDesignUnavailableMessage(null);
-      setIsRefineDesignOpen(false);
       beginRun("REFINE", artifactType);
       setActiveRunId(response.runId);
       router.replace(`${cleanArtifactUrl}?run=${encodeURIComponent(response.runId)}`);
@@ -356,7 +354,6 @@ export default function ArtifactConversationClient({
         // The message is safe to show; the user must pick a system to retry with.
         setDesignUnavailableMessage(reason.message);
         setRefineDesignSystemId(KEEP_DESIGN_SYSTEM);
-        setIsRefineDesignOpen(true);
         return;
       }
       setRefineError(reason instanceof Error ? reason.message : "The refinement run could not be started.");
@@ -480,8 +477,6 @@ export default function ArtifactConversationClient({
                 systems={designSystems.systems}
                 value={refineDesignSystemId}
                 onChange={setRefineDesignSystemId}
-                isOpen={isRefineDesignOpen}
-                onToggle={() => setIsRefineDesignOpen((current) => !current)}
                 onReload={() => void designSystems.reload()}
                 currentDesignName={currentDesignName}
                 unavailableMessage={designUnavailableMessage}

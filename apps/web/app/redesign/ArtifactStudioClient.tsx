@@ -30,7 +30,7 @@ import {
   storeArtifactPrompt,
 } from "./artifactStudioStorage";
 import { createArtifactBody, createArtifactRequest } from "./artifactRequests";
-import DesignSystemPicker, { DesignSystemTrigger } from "./DesignSystemPicker";
+import DesignSystemMenu from "./DesignSystemMenu";
 import { resolveDesignSystemId } from "./designSystems";
 import useDesignSystems from "./useDesignSystems";
 import RedesignShell from "./Shell";
@@ -77,7 +77,6 @@ export default function ArtifactStudioClient({
   const [withResearch, setWithResearch] = useState(false);
   const [stylePreset, setStylePreset] = useState<StylePreset>(StylePreset.PROFESSIONAL);
   const [pickedDesignSystemId, setPickedDesignSystemId] = useState<string>();
-  const [isDesignPickerOpen, setIsDesignPickerOpen] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [creationError, setCreationError] = useState<string | null>(null);
   const researchAvailable = canUseResearch(subscription ?? user.tier);
@@ -202,11 +201,15 @@ export default function ArtifactStudioClient({
                     <span className="mq-design-status" role="status">Loading designs…</span>
                   ) : null}
                   {type === "DOCUMENT" && selectedDesignSystem ? (
-                    <DesignSystemTrigger
-                      label={selectedDesignSystem.name}
-                      isOpen={isDesignPickerOpen}
-                      onToggle={() => setIsDesignPickerOpen((current) => !current)}
-                      controlsId="artifact-design-picker"
+                    <DesignSystemMenu
+                      systems={designSystems.systems}
+                      value={selectedDesignSystem.id}
+                      onChange={setPickedDesignSystemId}
+                      triggerLabel={selectedDesignSystem.name}
+                      triggerAriaLabel={`Design: ${selectedDesignSystem.name}`}
+                      createOwn
+                      align="end"
+                      disabled={isCreating}
                     />
                   ) : null}
 
@@ -251,16 +254,6 @@ export default function ArtifactStudioClient({
                   </button>
                 ))}
               </fieldset>
-            ) : null}
-
-            {type === "DOCUMENT" && selectedDesignSystem && isDesignPickerOpen ? (
-              <DesignSystemPicker
-                id="artifact-design-picker"
-                systems={designSystems.systems}
-                value={selectedDesignSystem.id}
-                onChange={setPickedDesignSystemId}
-                disabled={isCreating}
-              />
             ) : null}
 
             {creationError ? (

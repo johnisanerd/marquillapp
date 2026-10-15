@@ -1,6 +1,6 @@
 "use client";
 
-import DesignSystemPicker, { DesignSystemTrigger } from "./DesignSystemPicker";
+import DesignSystemMenu from "./DesignSystemMenu";
 import type { DesignSystemSummary } from "./designSystems";
 import type { DesignSystemsState } from "./useDesignSystems";
 
@@ -14,8 +14,6 @@ export default function RefineDesignControl({
   systems,
   value,
   onChange,
-  isOpen,
-  onToggle,
   onReload,
   currentDesignName,
   unavailableMessage,
@@ -25,8 +23,6 @@ export default function RefineDesignControl({
   systems: DesignSystemSummary[];
   value: string;
   onChange: (designSystemId: string) => void;
-  isOpen: boolean;
-  onToggle: () => void;
   onReload: () => void;
   currentDesignName?: string;
   unavailableMessage: string | null;
@@ -46,27 +42,17 @@ export default function RefineDesignControl({
         <p className="mq-studio-refine-error" role="alert">{unavailableMessage}</p>
       ) : null}
       {systems.length ? (
-        <>
-          <DesignSystemTrigger
-            label={triggerLabel}
-            isOpen={isOpen}
-            onToggle={onToggle}
-            disabled={disabled}
-            controlsId="refine-design-picker"
-          />
-          {isOpen ? (
-            <DesignSystemPicker
-              id="refine-design-picker"
-              systems={systems}
-              value={value}
-              onChange={onChange}
-              keepLabel={mustChoose
-                ? undefined
-                : `Keep current design${currentDesignName ? ` (${currentDesignName})` : ""}`}
-              disabled={disabled}
-            />
-          ) : null}
-        </>
+        <DesignSystemMenu
+          systems={systems}
+          value={value}
+          onChange={onChange}
+          triggerLabel={triggerLabel}
+          keepLabel={mustChoose
+            ? undefined
+            : `Keep current design${currentDesignName ? ` (${currentDesignName})` : ""}`}
+          required={mustChoose && !selected}
+          disabled={disabled}
+        />
       ) : mustChoose ? (
         <p className="mq-design-status" role="status">
           {state.status === "loading"

@@ -24,8 +24,6 @@ function renderControl(overrides: Partial<Parameters<typeof RefineDesignControl>
       systems={systems}
       value=""
       onChange={() => {}}
-      isOpen
-      onToggle={() => {}}
       onReload={() => {}}
       currentDesignName="Schematic"
       unavailableMessage={null}
@@ -34,14 +32,20 @@ function renderControl(overrides: Partial<Parameters<typeof RefineDesignControl>
   );
 }
 
+const openMenu = (view: ReturnType<typeof renderControl>) =>
+  fireEvent.click(view.getByRole("button", { name: /Design: keep current|Choose a design|Margin|Afterglow/ }), { detail: 1 });
+
 describe("RefineDesignControl", () => {
   test("keeps the current design by default and can switch", () => {
     const chosen: string[] = [];
     const view = renderControl({ onChange: (id) => chosen.push(id) });
 
     expect(view.getByText("Design: keep current")).toBeTruthy();
-    expect((view.getByLabelText(/Keep current design \(Schematic\)/) as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(view.getByLabelText(/Afterglow/));
+    openMenu(view);
+    const keep = view.getByRole("menuitemradio", { name: "Keep current design (Schematic)" });
+    expect(keep.getAttribute("aria-checked")).toBe("true");
+    expect(view.queryByText(/Create your own/)).toBeNull();
+    fireEvent.click(view.getByRole("menuitemradio", { name: "Afterglow" }));
     expect(chosen).toEqual(["afterglow"]);
   });
 
@@ -50,14 +54,28 @@ describe("RefineDesignControl", () => {
 
     expect(view.getByRole("alert").textContent).toBe(message);
     expect(view.getByText("Choose a design")).toBeTruthy();
-    expect(view.queryByLabelText(/Keep current/)).toBeNull();
-    expect(view.getAllByRole("radio").map((radio) => (radio as HTMLInputElement).checked)).toEqual([false, false]);
+    openMenu(view);
+    expect(view.queryByText(/Keep current/)).toBeNull();
+    expect(view.getAllByRole("menuitemradio").map((item) => item.getAttribute("aria-checked"))).toEqual(["false", "false"]);
+  });
+
+  test("previews the hovered design beside the menu", () => {
+    const view = renderControl({
+      systems: [{ ...systems[0], previews: ["/api/v1/design-systems/margin/1/previews/1.png"] }, systems[1]],
+    });
+    openMenu(view);
+
+    fireEvent.mouseEnter(view.getByRole("menuitemradio", { name: "Margin" }));
+
+    const card = view.getByRole("tooltip");
+    expect(card.textContent).toContain("Quiet.");
+    expect(card.querySelector("img")?.getAttribute("src")).toBe("/api/v1/design-systems/margin/1/previews/1.png");
   });
 
   test("clears the message once a system is chosen", () => {
     const view = renderControl({ unavailableMessage: message, value: "margin" });
     expect(view.queryByRole("alert")).toBeNull();
-    expect(view.getByText("Margin", { selector: ".mq-design-trigger span" })).toBeTruthy();
+    expect(view.getByText("Margin", { selector: ".mq-design-trigger-name" })).toBeTruthy();
   });
 
   test("offers a retry when the 409 meets a list that failed to load", () => {
@@ -82,7 +100,7 @@ describe("RefineDesignControl", () => {
 
   test("shows nothing extra when the list fails and nothing is required", () => {
     const view = renderControl({ state: { status: "failed" }, systems: [] });
-    expect(view.queryByRole("radio")).toBeNull();
+    expect(view.queryByRole("button")).toBeNull();
     expect(view.queryByRole("status")).toBeNull();
   });
 });
