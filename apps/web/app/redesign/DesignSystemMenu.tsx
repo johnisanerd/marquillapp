@@ -21,7 +21,8 @@ type PreviewSide = "left" | "right" | "above";
 const PREVIEW_WIDTH = 440;
 const PREVIEW_GAP = 10;
 const VIEWPORT_MARGIN = 12;
-const KEEP_KEY = "keep";
+
+const FOCUS_STEPS = { ArrowDown: 1, ArrowUp: -1, Home: "first", End: "last" } as const;
 
 /** The first preview page, cropped round, stands in for a colour the API does not give. */
 function Swatch({ system }: { system?: DesignSystemSummary }) {
@@ -107,8 +108,9 @@ export default function DesignSystemMenu({
   const menuId = useId();
   const previewId = `${menuId}-preview`;
   const [isOpen, setIsOpen] = useState(false);
-  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
-  const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  // The row the preview follows: the last one hovered or focused. A system's id, or
+  // KEEP_DESIGN_SYSTEM (never a real id) for the keep row.
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const [previewSide, setPreviewSide] = useState<PreviewSide>("right");
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -116,7 +118,6 @@ export default function DesignSystemMenu({
   const focusOnOpen = useRef(false);
 
   const selected = systems.find((system) => system.id === value);
-  const activeKey = hoveredKey ?? focusedKey;
   const activeSystem = systems.find((system) => system.id === activeKey);
 
   const items = useCallback(
@@ -126,8 +127,7 @@ export default function DesignSystemMenu({
 
   const close = useCallback((restoreFocus: boolean) => {
     setIsOpen(false);
-    setHoveredKey(null);
-    setFocusedKey(null);
+    setActiveKey(null);
     if (restoreFocus) triggerRef.current?.focus();
   }, []);
 
@@ -159,16 +159,14 @@ export default function DesignSystemMenu({
     if (!isOpen) return;
     function onPointerDown(event: PointerEvent) {
       if (rootRef.current?.contains(event.target as Node)) return;
-      const hadFocus = rootRef.current?.contains(document.activeElement) ?? false;
       close(false);
-      // Clicking a non-focusable area drops focus to <body>; give it back to the trigger.
-      if (hadFocus) {
-        setTimeout(() => {
-          if (!document.activeElement || document.activeElement === document.body) {
-            triggerRef.current?.focus();
-          }
-        }, 0);
-      }
+      // A click on a non-focusable area (or any click in Safari, which does not focus
+      // buttons) leaves focus on <body>; give it back to the trigger.
+      setTimeout(() => {
+        if (!document.activeElement || document.activeElement === document.body) {
+          triggerRef.current?.focus();
+        }
+      }, 0);
     }
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -209,17 +207,12 @@ export default function DesignSystemMenu({
   }
 
   function onPanelKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    const steps: Record<string, 1 | -1 | "first" | "last"> = {
-      ArrowDown: 1,
-      ArrowUp: -1,
-      Home: "first",
-      End: "last",
-    };
     if (event.key === "Tab") {
-      close(false);
+      // Hand focus back to the trigger first so Tab continues from it, not from <body>.
+      close(true);
       return;
     }
-    const step = steps[event.key];
+    const step = FOCUS_STEPS[event.key as keyof typeof FOCUS_STEPS];
     if (step === undefined) return;
     event.preventDefault();
     moveFocus(step);
@@ -232,11 +225,10 @@ export default function DesignSystemMenu({
 
   function rowProps(key: string) {
     return {
-      "data-design-item": "",
+      "data-design-item": key,
       "data-active": activeKey === key ? "" : undefined,
-      onMouseEnter: () => setHoveredKey(key),
-      onFocus: () => setFocusedKey(key),
-      onBlur: () => setFocusedKey((current) => (current === key ? null : current)),
+      onMouseEnter: () => setActiveKey(key),
+      onFocus: () => setActiveKey(key),
     };
   }
 
@@ -268,7 +260,11 @@ export default function DesignSystemMenu({
           aria-label="Design"
           className="mq-design-menu"
           onKeyDown={onPanelKeyDown}
-          onMouseLeave={() => setHoveredKey(null)}
+          onMouseLeave={() => {
+            // Fall back to the focused row, if any, so the pointer leaving does not blank the keyboard's.
+            const focused = document.activeElement;
+            setActiveKey(panelRef.current?.contains(focused) ? (focused as HTMLElement).dataset.designItem ?? null : null);
+          }}
         >
           {createOwn ? (
             <div role="menuitem" aria-disabled="true" className="mq-design-row is-action is-disabled">
@@ -284,7 +280,7 @@ export default function DesignSystemMenu({
               aria-checked={value === KEEP_DESIGN_SYSTEM}
               className={`mq-design-row${value === KEEP_DESIGN_SYSTEM ? " is-selected" : ""}`}
               onClick={() => choose(KEEP_DESIGN_SYSTEM)}
-              {...rowProps(KEEP_KEY)}
+              {...rowProps(KEEP_DESIGN_SYSTEM)}
             >
               <Palette size={16} aria-hidden="true" />
               <span>{keepLabel}</span>

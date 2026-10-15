@@ -212,6 +212,33 @@ describe("DesignSystemMenu", () => {
     expect(chosen).toEqual(["schematic"]);
   });
 
+  test("the card follows the latest interaction, hover or keyboard", () => {
+    const { view } = renderMenu();
+    trigger(view).focus();
+    fireEvent.keyDown(trigger(view), { key: "ArrowDown" });
+    fireEvent.mouseEnter(row(view, "Schematic"));
+    expect(preview(view)!.textContent).toContain("Schematic");
+
+    fireEvent.keyDown(row(view, "Margin"), { key: "ArrowDown" });
+    expect(preview(view)!.textContent).toContain("Afterglow");
+
+    // Leaving with the pointer falls back to the focused row rather than blanking it.
+    fireEvent.mouseEnter(row(view, "Schematic"));
+    fireEvent.mouseLeave(view.getByRole("menu"));
+    expect(preview(view)!.textContent).toContain("Afterglow");
+  });
+
+  test("Tab closes the menu with focus on the trigger so it carries on from there", () => {
+    const { view } = renderMenu();
+    trigger(view).focus();
+    fireEvent.keyDown(trigger(view), { key: "ArrowDown" });
+
+    fireEvent.keyDown(row(view, "Margin"), { key: "Tab" });
+
+    expect(view.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(trigger(view));
+  });
+
   test("a system without previews shows its name and no images", () => {
     const { view } = renderMenu();
     open(view);
