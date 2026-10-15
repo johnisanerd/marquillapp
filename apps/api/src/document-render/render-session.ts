@@ -1,5 +1,5 @@
 import puppeteer, { type Browser, type HTTPRequest } from 'puppeteer-core';
-import type { BrowserlessUsage } from './render-usage.types';
+import type { BrowserlessUsage, RenderTrace } from './render-usage.types';
 import type { DesignSystemDefinition } from '../design-system/design-system-definition';
 import { isFontRequest } from '../document-source/assemble';
 import {
@@ -9,6 +9,7 @@ import {
   RENDER_SNIPPET_LENGTH,
 } from './document-render.constants';
 import { countPdfPages } from './pdf-page-count';
+import { PhaseClock } from './render-phase-clock';
 import { RenderSessionError } from './render-session.error';
 import { PROBE_ELEMENT_SELECTOR, probeInPage } from './probe';
 
@@ -42,6 +43,8 @@ export interface RenderSessionResult {
   refusedRequests: string[];
   /** Wall time from connect to disconnect, and the Browserless units it costs. */
   usage: BrowserlessUsage;
+  /** The phase the session reached and the time each phase took (§11.1). */
+  trace: RenderTrace;
 }
 
 /**
@@ -76,6 +79,9 @@ const reasonOf = (error: unknown): string =>
  * font pass; a best-effort `cover.png` of page 1; `page.pdf` and its page
  * count. One deadline covers all of it, connect included.
  *
+ * It times each of those phases (`RenderPhase`), so a session that hits the
+ * deadline or fails says where: `result.trace`, or `RenderSessionError.trace`.
+ *
  * It measures and never decides: pass `result.facts` to `judge()`. A deadline
  * expiry is a fact (`timedOut`), not an error. Anything else that stops the
  * session throws `RenderSessionError`.
@@ -89,6 +95,7 @@ export async function renderDocumentSession(
   const { width, height } = definition.page;
   const deadlineMs = options.deadlineMs ?? RENDER_SESSION_DEADLINE_MS;
   const startedAt = Date.now();
+  const clock = new PhaseClock('connect');
   const facts = emptyRenderFacts();
   let pdf: Uint8Array | null = null;
   let cover: CoverCapture = {
@@ -106,6 +113,7 @@ export async function renderDocumentSession(
       await connected.disconnect();
       return;
     }
+    clock.enter('setup');
     const page = await connected.newPage();
 
     // 1. Untrusted content never executes. CDP evaluation still runs the probe.
@@ -134,9 +142,11 @@ export async function renderDocumentSession(
     // 4. `load`, not `networkidle0`, which never settles on Browserless. Font
     // readiness is proven by the probe and the font pass instead. The session
     // deadline bounds this, so the per-call timeout is off.
+    clock.enter('load');
     await page.setContent(documentSource, { waitUntil: 'load', timeout: 0 });
 
     // 5. The probe.
+    clock.enter('probe');
     const probed = await page.evaluate(
       probeInPage,
       PROBE_ELEMENT_SELECTOR,
@@ -148,6 +158,7 @@ export async function renderDocumentSession(
 
     // 6. The font pass: which font actually painted each element's glyphs.
     // `document.fonts.check()` cannot tell: it is true for a missing family.
+    clock.enter('fontPass');
     const cdp = await page.createCDPSession();
     await cdp.send('DOM.enable');
     await cdp.send('CSS.enable');
@@ -168,6 +179,7 @@ export async function renderDocumentSession(
     await cdp.detach();
 
     // 7. Best effort: a cover that fails to capture never blocks READY.
+    clock.enter('cover');
     try {
       const png = await page.screenshot({
         type: 'png',
@@ -179,6 +191,7 @@ export async function renderDocumentSession(
     }
 
     // 8. Print, then count what printed.
+    clock.enter('pdf');
     pdf = await page.pdf({
       width: `${width}px`,
       height: `${height}px`,
@@ -208,6 +221,8 @@ export async function renderDocumentSession(
   } finally {
     clearTimeout(timer);
   }
+  // Before the disconnect, which no phase of the session owns.
+  const trace = clock.finish();
   // Disconnecting ends the Browserless session; locally it leaves the browser up.
   await browser?.disconnect().catch(() => undefined);
 
@@ -220,7 +235,7 @@ export async function renderDocumentSession(
     throw new RenderSessionError(
       `render session failed: ${reasonOf(failure)}`,
       usage,
-      { cause: failure },
+      { cause: failure, trace },
     );
   }
   if (facts.timedOut) {
@@ -235,5 +250,6 @@ export async function renderDocumentSession(
     cover,
     refusedRequests: [...facts.refusedRequests],
     usage,
+    trace,
   };
 }

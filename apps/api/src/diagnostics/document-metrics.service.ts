@@ -83,6 +83,8 @@ export class DocumentMetricsService {
                 outcome: '$$attempt.outcome',
                 billed: '$$attempt.billed',
                 units: '$$attempt.units',
+                timedOut: '$$attempt.timedOut',
+                phase: '$$attempt.phase',
               },
             },
           },
