@@ -392,6 +392,13 @@ One CDP session per render replaces the REST `/pdf` call. It uses `puppeteer.con
 
 One deadline covers the whole session, not only `setContent`.
 
+**Phases (#192).** The session times seven phases and records the one it reached (see §11.1):
+`connect` (`puppeteer.connect`: Browserless queueing and handshake), `setup` (page, JavaScript off,
+interception, print media, viewport), `load` (`setContent` until `load`, which waits on the font
+stylesheet), `probe` (the in-page probe, which waits on `document.fonts.ready`), `fontPass`,
+`cover` and `pdf` (`page.pdf` and the page count). A stalled font fetch therefore shows as `load` or
+`probe`; a Browserless queue wait shows as `connect`.
+
 ### 5.2 The judge (#137)
 
 `judge(definition, facts) => Violation[]` is pure. The probe measures; the judge decides.
@@ -762,7 +769,13 @@ Each DOCUMENT run records a **`documentDiagnostics`** block on `WorkflowRun`:
 - repair rounds used, `finishReason`, output tokens, page count, the pin, wall time per step and the
   final `failureCode`
 - a reference to `renderAttempts` for session durations, units, outcome and `billed`, rather than a
-  copy
+  copy. Each entry also records where the session got to (#192): `phase` (the phase running when it
+  ended: `pdf` for a session that finished, the phase that hung or threw otherwise) and `phaseMs`
+  (milliseconds per phase entered, the last one up to the moment the session ended), and
+  `timedOut: true` when the session hit its deadline. The phases are those of §5.1. Entries from
+  before #192 carry none of these. The Browserless session id is not recorded: a plain
+  `puppeteer.connect` gets none from Browserless (its docs return an id only from the session API,
+  `POST /session`), so a `connect` timeout cannot yet be matched to a Browserless-side session.
 - `acceptedCandidate` (§7.3) and, on failure, the failed Candidate Source
 
 ### 11.2 Test layers (#141)
@@ -820,7 +833,8 @@ default changes to a system that passed.
   **`GET /diagnostics/documents?since=`** beside `GET /diagnostics/heap`. It returns, overall and per
   system: runs, `READY` rate, `failureCode` breakdown, first-candidate pass rate, repair-rounds
   histogram, top 10 violation codes (static and render), truncations, render sessions per run with
-  retries and absorbed units, wall time p50/p95, and credits p50/p95.
+  retries and absorbed units, timed-out sessions by the phase they hung in (`unknown` for entries
+  recorded before #192), wall time p50/p95, and credits p50/p95.
 - **Alerts** are `logger.error('[ALERT <tag>] run=… artifact=…')` lines, matched by Railway log
   search. Fixed tags: `render.egress`, `design_system.unresolvable`, `artifact.source_missing`,
   `icon.inline_failed`, `credit.commit_failed`.
@@ -844,6 +858,8 @@ default changes to a system that passed.
 
 ### 11.6 Logging (#141)
 
+- A timed-out render session logs one warning: `runId`, the session number, the phase and the
+  per-phase milliseconds.
 - One structured completion line per DOCUMENT run: `runId`, `artifactId`, version, pin, outcome and
   `failureCode`, repair rounds, render sessions, wall time, credits.
 - **Never logged:** Candidate or Document Source, prompts, briefs, research text, or violation

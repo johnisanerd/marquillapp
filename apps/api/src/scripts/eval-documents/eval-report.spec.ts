@@ -205,6 +205,7 @@ describe('formatEvalReport', () => {
       '[margin] Failure codes: document.repair_exhausted: 1',
     );
     expect(report).toContain('[afterglow] Failure codes: none');
+    expect(report).toContain('[margin] Render timeouts by phase: none');
     expect(report).toContain('[margin] Repair rounds');
     expect(report).toContain('[margin] Top static violations: none');
     expect(report).toContain('[margin] Top render violations: none');

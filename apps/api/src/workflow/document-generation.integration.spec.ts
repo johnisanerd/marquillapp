@@ -110,6 +110,7 @@ const session = (
   cover: { ok: true, png: PNG },
   refusedRequests: facts.refusedRequests,
   usage: { durationMs: 15_000, units: 1 },
+  trace: { phase: 'pdf', phaseMs: { connect: 900, pdf: 3_000 } },
   ...overrides,
 });
 
@@ -403,6 +404,8 @@ describe('DOCUMENT generation, end to end', () => {
       expect(run.runHandle.recordRenderAttempt).toHaveBeenCalledWith({
         durationMs: 15_000,
         units: 1,
+        phase: 'pdf',
+        phaseMs: { connect: 900, pdf: 3_000 },
         outcome: 'PASSED',
         billed: true,
       });
