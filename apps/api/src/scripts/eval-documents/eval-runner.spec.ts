@@ -89,10 +89,9 @@ const makeEval = (
         id,
         definition: {
           page: {
-            pages:
-              id === 'margin' || id === 'schematic'
-                ? { min: 2, max: 15 }
-                : { min: 3, max: 12 },
+            pages: {
+              max: id === 'margin' || id === 'schematic' ? 15 : 12,
+            },
           },
         },
       })),

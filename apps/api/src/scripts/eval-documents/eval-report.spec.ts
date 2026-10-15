@@ -98,11 +98,11 @@ describe('formatEvalReport', () => {
   it('should print every gate with PASS or FAIL', () => {
     const report = formatEvalReport(makeResult());
 
-    expect(report).toMatch(/PASS\s+Runs failing \u2264 1/);
+    expect(report).toMatch(/PASS\s+Runs failing ≤ 1/);
     expect(report).toMatch(/PASS\s+document\.truncated = 0/);
     expect(report).toMatch(/PASS\s+render\.egress = 0/);
-    expect(report).toMatch(/PASS\s+Slowest run \u2264 4m00s/);
-    expect(report).toMatch(/PASS\s+Costliest successful run \u2264 3\u00d7/);
+    expect(report).toMatch(/PASS\s+Slowest run ≤ 4m00s/);
+    expect(report).toMatch(/PASS\s+Costliest successful run ≤ 3×/);
   });
 
   it('should mark a failing gate FAIL and the eval failed', () => {
@@ -110,7 +110,7 @@ describe('formatEvalReport', () => {
 
     const report = formatEvalReport(failing);
 
-    expect(report).toMatch(/FAIL\s+Runs failing \u2264 1/);
+    expect(report).toMatch(/FAIL\s+Runs failing ≤ 1/);
     expect(report).toMatch(/FAIL\s+Default design system \(margin\)/);
     expect(report).toContain('RESULT: FAIL');
   });

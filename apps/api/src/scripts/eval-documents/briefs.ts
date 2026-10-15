@@ -6,12 +6,6 @@ export interface EvalBrief {
 }
 
 const NUMBER_WORDS: Record<number, string> = {
-  1: 'one',
-  2: 'two',
-  3: 'three',
-  4: 'four',
-  5: 'five',
-  6: 'six',
   7: 'seven',
   8: 'eight',
   9: 'nine',
@@ -31,40 +25,42 @@ const LAUNCH_STEPS = [
   'hold a retrospective',
 ];
 
+/** Steps a shorter guide drops first; the rest of the sequence stays whole. */
+const DROPPED_FIRST = [
+  'name the audience',
+  'pick the launch date',
+  'prepare the announcement',
+];
+
+export const LONG_BRIEF_PAGES = 15;
+const MIN_LONG_BRIEF_PAGES = 12;
+
 /**
- * Builds the prompt for the long brief (field guide to product launch).
- * When pages is 15, produces the exact canonical prompt text.
- * When pages is capped (e.g. 12), scales the covered steps and target page count.
+ * The long brief (a field guide to a product launch) for a given page count.
+ * Three pages of front matter, one page per step, then a checklist and a
+ * closing page, so a shorter guide drops steps instead of squeezing them.
+ * `buildLongBriefPrompt(15)` is the canonical ten-step prompt.
  */
 export function buildLongBriefPrompt(pages: number): string {
-  const stepCount = Math.max(1, Math.min(LAUNCH_STEPS.length, pages - 5));
-  const stepEndPage = 3 + stepCount;
-  const countWord = NUMBER_WORDS[stepCount] ?? String(stepCount);
-  const stepsText = LAUNCH_STEPS.slice(0, stepCount).join(', ');
+  if (pages < MIN_LONG_BRIEF_PAGES || pages > LONG_BRIEF_PAGES) {
+    throw new RangeError(
+      `The long brief supports ${MIN_LONG_BRIEF_PAGES} to ${LONG_BRIEF_PAGES} pages, not ${pages}.`,
+    );
+  }
+  const stepCount = pages - 5;
+  const dropped = DROPPED_FIRST.slice(0, LAUNCH_STEPS.length - stepCount);
+  const steps = LAUNCH_STEPS.filter((step) => !dropped.includes(step));
+  const count = NUMBER_WORDS[stepCount];
 
   return [
     `A ${pages}-page LinkedIn document: "A field guide to running your first product launch".`,
     'Audience: first-time product managers at small companies.',
     'Page 1 is the cover. Page 2 explains why launches fail quietly. Page 3 is a contents page.',
-    `Pages 4 to ${stepEndPage} cover ${countWord} steps in order: ${stepsText}. Give each step one page with a short rule of thumb.`,
-    `Page ${pages - 1} summarises the ${countWord} steps in a compact checklist.`,
+    `Pages 4 to ${3 + stepCount} cover ${count} steps in order: ${steps.join(', ')}. Give each step one page with a short rule of thumb.`,
+    `Page ${pages - 1} summarises the ${count} steps in a compact checklist.`,
     `Page ${pages} invites readers to share the step they found hardest.`,
     `Make it exactly ${pages} pages. One idea per page, little text.`,
   ].join(' ');
-}
-
-export function buildBriefPrompt(
-  targetPages: number,
-  actualPages: number,
-  basePrompt: string,
-): string {
-  if (actualPages === targetPages) return basePrompt;
-  return basePrompt
-    .replace(new RegExp(`A ${targetPages}-page`, 'g'), `A ${actualPages}-page`)
-    .replace(
-      new RegExp(`exactly ${targetPages} pages`, 'g'),
-      `exactly ${actualPages} pages`,
-    );
 }
 
 /**
@@ -97,37 +93,22 @@ export const EVAL_BRIEFS: readonly EvalBrief[] = [
     ].join(' '),
   },
   {
-    pages: 15,
-    prompt: buildLongBriefPrompt(15),
+    pages: LONG_BRIEF_PAGES,
+    prompt: buildLongBriefPrompt(LONG_BRIEF_PAGES),
   },
 ];
 
 /**
- * Adapts briefs to a Design System's page bounds: clamps the long brief to
- * min(15, pages.max), and clamps any brief below pages.min or above pages.max.
+ * The briefs for a Design System whose `pages.max` is `maxPages`: the long
+ * brief requests `min(15, maxPages)` pages, so the eval never asks for a
+ * length the system's definition would reject (#194).
  */
-export function briefsForSystem(pageLimits?: {
-  min: number;
-  max: number;
-}): EvalBrief[] {
-  const min = pageLimits?.min ?? 1;
-  const max = pageLimits?.max ?? 15;
-  return EVAL_BRIEFS.map((brief) => {
-    const clampedPages = Math.max(min, Math.min(brief.pages, max));
-    if (clampedPages === brief.pages) {
-      return brief;
-    }
-    if (brief.pages === 15) {
-      return {
-        pages: clampedPages,
-        prompt: buildLongBriefPrompt(clampedPages),
-      };
-    }
-    return {
-      pages: clampedPages,
-      prompt: buildBriefPrompt(brief.pages, clampedPages, brief.prompt),
-    };
-  });
+export function briefsForSystem(maxPages: number): EvalBrief[] {
+  return EVAL_BRIEFS.map((brief) =>
+    brief.pages > maxPages
+      ? { pages: maxPages, prompt: buildLongBriefPrompt(maxPages) }
+      : brief,
+  );
 }
 
 /** What a REFINE run asks for. Both refines of the matrix use it. */

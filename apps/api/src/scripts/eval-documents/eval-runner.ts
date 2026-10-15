@@ -6,7 +6,7 @@ import type { DocumentMetricsQuery } from '../../diagnostics/document-metrics.se
 import {
   buildEvalMatrix,
   switchTarget,
-  type EvalMatrixTarget,
+  type EvalSystem,
   type RefineEvalEntry,
 } from './eval-matrix';
 import { evaluateEval, type EvalEvaluation } from './eval-gates';
@@ -47,13 +47,7 @@ export interface EvalGeneration {
 export interface EvalDeps {
   designSystems: {
     listActive(): { id: string }[];
-    getActive?(id: string): {
-      definition: {
-        page: {
-          pages: { min: number; max: number };
-        };
-      };
-    };
+    getActive(id: string): { definition: { page: { pages: { max: number } } } };
   };
   defaultDesignSystemId: string;
   /** The Mongo-only eval user whose runs these are. */
@@ -120,16 +114,19 @@ export async function runDocumentEval(
   const designSystemIds = deps.designSystems.listActive().map(({ id }) => id);
   assertLaunchSet(designSystemIds, deps.defaultDesignSystemId);
 
-  const targets: EvalMatrixTarget[] = designSystemIds.map((id) => {
-    const record = deps.designSystems.getActive?.(id);
-    return record ? { id, definition: record.definition } : id;
-  });
-  const matrix = buildEvalMatrix(targets);
+  const systems: EvalSystem[] = designSystemIds.map((id) => ({
+    id,
+    maxPages: deps.designSystems.getActive(id).definition.page.pages.max,
+  }));
+  const maxPages = new Map(
+    systems.map((system) => [system.id, system.maxPages]),
+  );
+  const matrix = buildEvalMatrix(systems);
   const records: EvalRunRecord[] = matrix.initial.map((entry) => ({
     key: entry.key,
     kind: 'INITIAL',
     requestedDesignSystemId: entry.designSystemId,
-    requestedPages: entry.requestedPages,
+    requestedPages: entry.pages,
     state: 'NOT_RUN',
   }));
 
@@ -147,10 +144,8 @@ export async function runDocumentEval(
   // Only a READY run can be refined, and an artifact takes one Attempt at a
   // time, so the two Refinements start from the first two distinct READY runs.
   const ready = records.filter((record) => record.state === 'COMPLETED');
-  const getLimits = (id: string) =>
-    deps.designSystems.getActive?.(id)?.definition?.page?.pages;
   const refinements = matrix.refine.map((entry, index) =>
-    refineRecord(entry, ready[index], designSystemIds, getLimits),
+    refineRecord(entry, ready[index], designSystemIds, maxPages),
   );
   records.push(...refinements.map(({ record }) => record));
   await runPool(refinements, options.concurrency, async (refinement) => {
@@ -244,19 +239,18 @@ function refineRecord(
   entry: RefineEvalEntry,
   source: EvalRunRecord | undefined,
   designSystemIds: string[],
-  getLimits?: (id: string) => { min: number; max: number } | undefined,
+  maxPages: ReadonlyMap<string, number>,
 ): RefineLaunch {
   const designSystemId =
     entry.mode === 'switch' && source?.requestedDesignSystemId
       ? switchTarget(designSystemIds, source.requestedDesignSystemId)
       : undefined;
-  const targetSystemId = designSystemId ?? source?.requestedDesignSystemId;
-  const rawPages = source?.requestedPages ?? 0;
-  const limits =
-    targetSystemId && getLimits ? getLimits(targetSystemId) : undefined;
-  const requestedPages = limits
-    ? Math.max(limits.min, Math.min(rawPages, limits.max))
-    : rawPages;
+  // A Refinement asks for no page count of its own; the record shows the
+  // source's, held to the cap of the system it switches to.
+  const requestedPages = Math.min(
+    source?.requestedPages ?? 0,
+    (designSystemId && maxPages.get(designSystemId)) || Infinity,
+  );
 
   const record: EvalRunRecord = {
     key: entry.key,

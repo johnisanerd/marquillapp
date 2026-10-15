@@ -2,86 +2,43 @@ import { briefsForSystem, buildLongBriefPrompt, EVAL_BRIEFS } from './briefs';
 import { buildEvalMatrix, switchTarget } from './eval-matrix';
 
 const SYSTEMS = [
-  'margin',
-  'afterglow',
-  'broadside',
-  'colophon',
-  'overprint',
-  'schematic',
+  { id: 'margin', maxPages: 15 },
+  { id: 'afterglow', maxPages: 12 },
+  { id: 'broadside', maxPages: 12 },
+  { id: 'colophon', maxPages: 12 },
+  { id: 'overprint', maxPages: 12 },
+  { id: 'schematic', maxPages: 15 },
 ];
-
-const SYSTEMS_WITH_BOUNDS = [
-  { id: 'margin', pages: { min: 2, max: 15 } },
-  { id: 'afterglow', pages: { min: 3, max: 12 } },
-  { id: 'broadside', pages: { min: 3, max: 12 } },
-  { id: 'colophon', pages: { min: 3, max: 12 } },
-  { id: 'overprint', pages: { min: 3, max: 12 } },
-  { id: 'schematic', pages: { min: 3, max: 15 } },
-];
+const SYSTEM_IDS = SYSTEMS.map(({ id }) => id);
 
 describe('buildEvalMatrix', () => {
   it('should build 18 initial runs, one per system and brief', () => {
     const { initial } = buildEvalMatrix(SYSTEMS);
 
     expect(initial).toHaveLength(18);
-    for (const designSystemId of SYSTEMS) {
+    for (const designSystemId of SYSTEM_IDS) {
       expect(
-        initial
-          .filter((entry) => entry.designSystemId === designSystemId)
-          .map((entry) => entry.pages),
-      ).toEqual([4, 8, 15]);
+        initial.filter((entry) => entry.designSystemId === designSystemId),
+      ).toHaveLength(3);
     }
   });
 
-  it('should cap the long brief at pages.max (12 for capped systems, 15 for uncapped)', () => {
-    const { initial } = buildEvalMatrix(SYSTEMS_WITH_BOUNDS);
+  it('should request min(15, pages.max) pages for the long brief and key the run by that count', () => {
+    const { initial } = buildEvalMatrix(SYSTEMS);
 
-    expect(initial).toHaveLength(18);
-
-    const margin = initial.filter((e) => e.designSystemId === 'margin');
-    expect(margin.map((e) => e.requestedPages)).toEqual([4, 8, 15]);
-    expect(margin.find((e) => e.key === 'margin/15p')?.prompt).toContain(
-      'exactly 15 pages',
-    );
-
-    const afterglow = initial.filter((e) => e.designSystemId === 'afterglow');
-    expect(afterglow.map((e) => e.requestedPages)).toEqual([4, 8, 12]);
-    expect(afterglow.find((e) => e.key === 'afterglow/15p')?.prompt).toContain(
+    const pagesOf = (id: string) =>
+      initial.filter((e) => e.designSystemId === id).map((e) => e.pages);
+    expect(pagesOf('margin')).toEqual([4, 8, 15]);
+    expect(pagesOf('schematic')).toEqual([4, 8, 15]);
+    expect(pagesOf('afterglow')).toEqual([4, 8, 12]);
+    expect(initial.map((e) => e.key)).toContain('afterglow/12p');
+    expect(initial.map((e) => e.key)).not.toContain('afterglow/15p');
+    expect(initial.find((e) => e.key === 'afterglow/12p')?.prompt).toContain(
       'exactly 12 pages',
     );
-  });
-
-  it('should read bounds from definition.page.pages when present', () => {
-    const systems = [
-      {
-        id: 'afterglow',
-        definition: { page: { pages: { min: 3, max: 12 } } },
-      },
-      {
-        id: 'margin',
-        definition: { page: { pages: { min: 2, max: 15 } } },
-      },
-    ];
-    const { initial } = buildEvalMatrix(systems);
-
-    expect(
-      initial
-        .filter((e) => e.designSystemId === 'afterglow')
-        .map((e) => e.requestedPages),
-    ).toEqual([4, 8, 12]);
-    expect(
-      initial
-        .filter((e) => e.designSystemId === 'margin')
-        .map((e) => e.requestedPages),
-    ).toEqual([4, 8, 15]);
-  });
-
-  it('should clamp a brief that falls below pages.min', () => {
-    const systems = [{ id: 'high-min', pages: { min: 5, max: 12 } }];
-    const { initial } = buildEvalMatrix(systems);
-
-    expect(initial.map((e) => e.requestedPages)).toEqual([5, 8, 12]);
-    expect(initial[0].prompt).toContain('exactly 5 pages');
+    expect(initial.find((e) => e.key === 'margin/15p')?.prompt).toContain(
+      'exactly 15 pages',
+    );
   });
 
   it('should key every initial run by system and page count', () => {
@@ -91,18 +48,19 @@ describe('buildEvalMatrix', () => {
     expect(new Set(initial.map((entry) => entry.key)).size).toBe(18);
   });
 
-  it('should hand each run the brief for its page count', () => {
+  it('should hand each run a brief that asks for exactly its page count', () => {
     const { initial } = buildEvalMatrix(SYSTEMS);
 
     for (const entry of initial) {
-      expect(entry.prompt).toBe(
-        EVAL_BRIEFS.find((brief) => brief.pages === entry.pages)?.prompt,
-      );
+      expect(entry.prompt).toContain(`exactly ${entry.pages} pages`);
     }
   });
 
   it('should keep systems in the order given', () => {
-    const { initial } = buildEvalMatrix(['b', 'a']);
+    const { initial } = buildEvalMatrix([
+      { id: 'b', maxPages: 15 },
+      { id: 'a', maxPages: 15 },
+    ]);
 
     expect(initial.map((entry) => entry.designSystemId)).toEqual([
       'b',
@@ -130,8 +88,8 @@ describe('buildEvalMatrix', () => {
 
 describe('switchTarget', () => {
   it('should pick the first system that is not the source', () => {
-    expect(switchTarget(SYSTEMS, 'afterglow')).toBe('margin');
-    expect(switchTarget(SYSTEMS, 'margin')).toBe('afterglow');
+    expect(switchTarget(SYSTEM_IDS, 'afterglow')).toBe('margin');
+    expect(switchTarget(SYSTEM_IDS, 'margin')).toBe('afterglow');
   });
 
   it('should return undefined when there is no other system', () => {
@@ -150,36 +108,65 @@ describe('EVAL_BRIEFS', () => {
 });
 
 describe('briefsForSystem', () => {
-  it('should return unchanged briefs when within limits', () => {
-    const briefs = briefsForSystem({ min: 2, max: 15 });
-    expect(briefs.map((b) => b.pages)).toEqual([4, 8, 15]);
+  it('should leave the briefs alone for a system that allows 15 pages', () => {
+    expect(briefsForSystem(15)).toEqual(EVAL_BRIEFS);
   });
 
-  it('should cap long brief to pages.max', () => {
-    const briefs = briefsForSystem({ min: 3, max: 12 });
-    expect(briefs.map((b) => b.pages)).toEqual([4, 8, 12]);
-    expect(briefs[2].prompt).toContain('exactly 12 pages');
+  it('should cap only the long brief at pages.max', () => {
+    const briefs = briefsForSystem(12);
+
+    expect(briefs.map((brief) => brief.pages)).toEqual([4, 8, 12]);
+    expect(briefs.slice(0, 2)).toEqual(EVAL_BRIEFS.slice(0, 2));
     expect(briefs[2].prompt).toContain('A 12-page LinkedIn document');
-  });
-
-  it('should clamp brief below pages.min', () => {
-    const briefs = briefsForSystem({ min: 6, max: 12 });
-    expect(briefs.map((b) => b.pages)).toEqual([6, 8, 12]);
-    expect(briefs[0].prompt).toContain('exactly 6 pages');
   });
 });
 
 describe('buildLongBriefPrompt', () => {
-  it('should build 15-page canonical prompt matching EVAL_BRIEFS[2]', () => {
-    expect(buildLongBriefPrompt(15)).toBe(EVAL_BRIEFS[2].prompt);
+  const steps = (prompt: string) =>
+    /in order: (.*?)\. Give each step/.exec(prompt)?.[1].split(', ') ?? [];
+
+  it('should be the ten-step brief at 15 pages', () => {
+    const prompt = buildLongBriefPrompt(15);
+
+    expect(prompt).toBe(EVAL_BRIEFS[2].prompt);
+    expect(prompt).toContain('Pages 4 to 13 cover ten steps');
+    expect(steps(prompt)).toHaveLength(10);
   });
 
-  it('should scale step count and page numbers for 12 pages', () => {
+  it.each([12, 13, 14, 15])(
+    'should add up to %i pages with one page per step',
+    (pages) => {
+      const prompt = buildLongBriefPrompt(pages);
+      const stepCount = steps(prompt).length;
+
+      expect(prompt).toContain(`A ${pages}-page`);
+      expect(prompt).toContain(`exactly ${pages} pages`);
+      expect(prompt).toContain(`Pages 4 to ${3 + stepCount} cover`);
+      expect(prompt).toContain(`Page ${pages - 1} summarises`);
+      expect(prompt).toContain(`Page ${pages} invites`);
+      expect(3 + stepCount + 2).toBe(pages);
+    },
+  );
+
+  it('should keep the launch and the retrospective in the 12-page guide and never mention 15', () => {
     const prompt = buildLongBriefPrompt(12);
-    expect(prompt).toContain('A 12-page LinkedIn document');
-    expect(prompt).toContain('cover seven steps in order');
-    expect(prompt).toContain('Page 11 summarises the seven steps');
-    expect(prompt).toContain('Page 12 invites readers');
-    expect(prompt).toContain('Make it exactly 12 pages');
+
+    expect(prompt).toContain('cover seven steps');
+    expect(prompt).toContain('summarises the seven steps');
+    expect(steps(prompt)).toEqual([
+      'define the one outcome',
+      'write the one-sentence pitch',
+      'brief sales and support',
+      'run a dry rehearsal',
+      'launch',
+      'watch the first 48 hours',
+      'hold a retrospective',
+    ]);
+    expect(prompt).not.toMatch(/15|\bten\b/);
+  });
+
+  it('should refuse a page count the guide cannot be built for', () => {
+    expect(() => buildLongBriefPrompt(11)).toThrow(RangeError);
+    expect(() => buildLongBriefPrompt(16)).toThrow(RangeError);
   });
 });

@@ -16,7 +16,7 @@ then polls the run records until every run ends:
 
 | Runs | What |
 |---|---|
-| 18 INITIAL | the 6 listed launch Design Systems (read live from `DesignSystemsService.listActive()`) × a 4-, 8- and up to 15-page brief (the long brief requests `min(15, pages.max)` per system, so 12 pages for afterglow, broadside, colophon, and overprint, and 15 for margin and schematic) |
+| 18 INITIAL | the 6 listed launch Design Systems (read live from `DesignSystemsService.listActive()`) × a 4-, 8- and up to 15-page brief (the long brief requests `min(15, pages.max)` per system, so 12 pages for afterglow, broadside, colophon, and overprint, and 15 for margin and schematic; the run's key names the count it asked for, such as `afterglow/12p`, and a 12-page brief drops three steps rather than squeezing ten onto fewer pages) |
 | 1 REFINE (carry) | a Refinement of the first `READY` initial run, with no `designSystemId`: it keeps the pin |
 | 1 REFINE (switch) | a Refinement of the second `READY` initial run, switching to the first listed system that is not its own |
 
