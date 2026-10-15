@@ -679,6 +679,38 @@ describe('check', () => {
     expect(violation.detail).toContain('41px');
   });
 
+  it.each([
+    ['a universal reset', '* { box-sizing: border-box; }'],
+    ['a universal reset with a pseudo-element', '*, *::before { margin: 0; }'],
+    ['a universal descendant of html', 'html * { margin: 0; }'],
+  ])(
+    'should suggest `.page *` in the detail when the page selector is %s',
+    (_name, css) => {
+      const violations = check(margin, candidate({ css })).filter(
+        (v) => v.code === 'envelope.css.pageSelector',
+      );
+
+      expect(violations).toHaveLength(1);
+      expect(violations[0].detail).toContain('write `.page *` instead');
+    },
+  );
+
+  it.each([
+    ['.page', '.page { display: flex; }'],
+    ['section', 'section { display: flex; }'],
+    ['[data-role]', '[data-role="title"] { display: flex; }'],
+  ])(
+    'should not suggest `.page *` in the detail when the page selector is %s',
+    (_name, css) => {
+      const [violation] = check(margin, candidate({ css })).filter(
+        (v) => v.code === 'envelope.css.pageSelector',
+      );
+
+      expect(violation.detail).not.toContain('.page *');
+      expect(violation.detail).toContain('lay out an element inside it');
+    },
+  );
+
   it('should ignore comments in markup and CSS', () => {
     expect(
       codesOf(

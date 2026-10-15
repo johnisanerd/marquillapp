@@ -32,6 +32,33 @@ describe('renderPromptFragment', () => {
     expect(fragment).toContain('- title (first page, required):');
   });
 
+  it('should state the usable box inside the safe area when given a definition', () => {
+    const ds = load('margin');
+
+    const fragment = renderPromptFragment(ds);
+
+    // margin: 1080x1350 with a 112px safe area all round.
+    expect(fragment).toContain('Every page is exactly 1080x1350px');
+    expect(fragment).toContain('already pads every page by the safe area');
+    expect(fragment).toContain('usable box is 856x1126px');
+  });
+
+  it('should derive the usable box when each side of the safe area differs', () => {
+    const ds = load('margin');
+
+    const fragment = renderPromptFragment({
+      ...ds,
+      version: 98,
+      page: {
+        ...ds.page,
+        safeArea: { top: 10, right: 20, bottom: 30, left: 40 },
+      },
+    });
+
+    expect(fragment).toContain('10px top, 20px right, 30px bottom, 40px left');
+    expect(fragment).toContain('usable box is 1020x1310px');
+  });
+
   it('should mark a role required when it may sit on any page', () => {
     const ds = load('margin');
     const roles = ds.composition.pageRoles.map((role, i) =>
