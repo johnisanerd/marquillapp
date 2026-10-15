@@ -7,7 +7,7 @@ import type {
   RefineArtifactRequest,
   RefineArtifactResponse,
 } from "./artifactTypes";
-import { createDesignSystemField, refineDesignSystemField } from "./designSystems";
+import { designSystemField } from "./designSystems";
 
 export function createArtifactBody({
   type,
@@ -27,7 +27,7 @@ export function createArtifactBody({
     prompt,
     withResearch,
     ...(type === "POST" ? { stylePreset } : {}),
-    ...createDesignSystemField(type, designSystemId),
+    ...designSystemField(type, designSystemId),
   };
 }
 
@@ -43,7 +43,7 @@ export function refineArtifactBody(
   feedback: string,
   designSystemId?: string,
 ): RefineArtifactRequest {
-  return { feedback, ...refineDesignSystemField(type, designSystemId) };
+  return { feedback, ...designSystemField(type, designSystemId) };
 }
 
 export function refineArtifactRequest(artifactId: string, body: RefineArtifactRequest) {

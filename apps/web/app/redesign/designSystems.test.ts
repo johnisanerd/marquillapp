@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { ApiRequestError } from "./api";
 import {
-  createDesignSystemField,
+  designSystemField,
   fetchDesignSystems,
   isDesignSystemUnavailable,
   parseDesignSystems,
-  refineDesignSystemField,
   resolveDesignSystemId,
   type DesignSystemSummary,
 } from "./designSystems";
@@ -54,19 +53,13 @@ describe("resolveDesignSystemId", () => {
   });
 });
 
-describe("designSystemId request fields", () => {
-  test("a create carries the id for a DOCUMENT only", () => {
-    expect(createDesignSystemField("DOCUMENT", "afterglow")).toEqual({ designSystemId: "afterglow" });
-    expect(createDesignSystemField("DOCUMENT", undefined)).toEqual({});
-    expect(createDesignSystemField("POST", "afterglow")).toEqual({});
-    expect(createDesignSystemField("POLL", "afterglow")).toEqual({});
-  });
-
-  test("a refine carries the id for a DOCUMENT only, and only when switching", () => {
-    expect(refineDesignSystemField("DOCUMENT", "afterglow")).toEqual({ designSystemId: "afterglow" });
-    expect(refineDesignSystemField("DOCUMENT", undefined)).toEqual({});
-    expect(refineDesignSystemField("POST", "afterglow")).toEqual({});
-    expect(refineDesignSystemField(undefined, "afterglow")).toEqual({});
+describe("designSystemField", () => {
+  test("carries the id for a DOCUMENT only", () => {
+    expect(designSystemField("DOCUMENT", "afterglow")).toEqual({ designSystemId: "afterglow" });
+    expect(designSystemField("DOCUMENT", undefined)).toEqual({});
+    expect(designSystemField("POST", "afterglow")).toEqual({});
+    expect(designSystemField("POLL", "afterglow")).toEqual({});
+    expect(designSystemField(undefined, "afterglow")).toEqual({});
   });
 });
 

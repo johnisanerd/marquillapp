@@ -42,13 +42,11 @@ export function resolveDesignSystemId(systems: DesignSystemSummary[], picked?: s
   return systems[0]?.id;
 }
 
-/** `designSystemId` belongs to DOCUMENT only; with no list there is no choice, which means `margin`. */
-export function createDesignSystemField(type: ArtifactType, designSystemId?: string) {
-  return type === "DOCUMENT" && designSystemId ? { designSystemId } : {};
-}
-
-/** A refinement keeps the Current Version's pin unless the user switched, and only a DOCUMENT has one. */
-export function refineDesignSystemField(type: ArtifactType | undefined, designSystemId?: string) {
+/**
+ * `designSystemId` belongs to a DOCUMENT only. On create, no id means `margin`; on a
+ * refine, no id keeps the Current Version's pin.
+ */
+export function designSystemField(type: ArtifactType | undefined, designSystemId?: string) {
   return type === "DOCUMENT" && designSystemId ? { designSystemId } : {};
 }
 
