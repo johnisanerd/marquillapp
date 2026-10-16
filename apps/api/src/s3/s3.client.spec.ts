@@ -71,6 +71,75 @@ describe('S3 client', () => {
     delete process.env.R2_BUCKET_NAME;
     delete process.env.R2_ACCESS_KEY_ID;
     delete process.env.R2_SECRET_ACCESS_KEY;
+    delete process.env.R2_ENDPOINT;
+  });
+
+  describe('R2 configuration (R2_ENDPOINT unset)', () => {
+    it('should build the S3Client against the account R2 endpoint with region auto when R2_ENDPOINT is unset', async () => {
+      await deleteFile('k');
+      expect(S3Client).toHaveBeenCalledWith({
+        region: 'auto',
+        endpoint: `https://${ACCOUNT_ID}.r2.cloudflarestorage.com`,
+        credentials: {
+          accessKeyId: 'test-access-key',
+          secretAccessKey: 'test-secret-key',
+        },
+      });
+    });
+
+    it('should use the account R2 URL from uploadFile when R2_ENDPOINT is empty', async () => {
+      process.env.R2_ENDPOINT = '';
+      const url = await uploadFile('k.pdf', Buffer.from(''), 'application/pdf');
+      expect(url).toBe(
+        `https://${BUCKET}.${ACCOUNT_ID}.r2.cloudflarestorage.com/k.pdf`,
+      );
+    });
+  });
+
+  describe('S3-compatible endpoint (R2_ENDPOINT set)', () => {
+    beforeEach(() => {
+      process.env.R2_ENDPOINT = 'http://localhost:9000';
+      delete process.env.R2_ACCOUNT_ID;
+    });
+
+    it('should skip R2_ACCOUNT_ID and use path-style addressing when R2_ENDPOINT is set', async () => {
+      await expect(deleteFile('k')).resolves.toBeUndefined();
+      expect(S3Client).toHaveBeenCalledWith({
+        region: 'us-east-1',
+        endpoint: 'http://localhost:9000',
+        forcePathStyle: true,
+        credentials: {
+          accessKeyId: 'test-access-key',
+          secretAccessKey: 'test-secret-key',
+        },
+      });
+    });
+
+    it('should reject a missing bucket when R2_ENDPOINT is set', async () => {
+      delete process.env.R2_BUCKET_NAME;
+      await expect(deleteFile('k')).rejects.toThrow(
+        'R2 storage is not configured. Missing env vars: R2_BUCKET_NAME',
+      );
+    });
+
+    it('should return a path-style URL from uploadFile when R2_ENDPOINT is set', async () => {
+      const url = await uploadFile(
+        'a/b.pdf',
+        Buffer.from(''),
+        'application/pdf',
+      );
+      expect(url).toBe(`http://localhost:9000/${BUCKET}/a/b.pdf`);
+    });
+
+    it('should omit the double slash from the uploadFile URL when R2_ENDPOINT ends with a slash', async () => {
+      process.env.R2_ENDPOINT = 'http://localhost:9000/';
+      const url = await uploadFile(
+        'a/b.pdf',
+        Buffer.from(''),
+        'application/pdf',
+      );
+      expect(url).toBe(`http://localhost:9000/${BUCKET}/a/b.pdf`);
+    });
   });
 
   describe('uploadFile', () => {

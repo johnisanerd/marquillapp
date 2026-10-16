@@ -35,7 +35,7 @@ limit); a healthy eval takes much less.
 
 ## What it writes
 
-The script is not read-only. In the environment its `MONGO_URI`, Redis and `R2_*` keys point at, it creates:
+The script is not read-only. In the environment its `MONGO_URI`, Redis and `R2_*` keys point at (the local MinIO by default), it creates:
 
 - the eval **User** `eval@marquill.internal` (once; re-runs reuse it) and its one **Subscription** row;
 - `credits` **Usage** rows for that user, as the runs spend credits (the script also deletes them before each launch);
@@ -48,8 +48,10 @@ Subscription and the credit Usage rows are the only things to remove, with `--cl
 
 ## Prerequisites
 
-1. **`apps/api/.env`** with real values for the target environment: `MONGO_URI`, Redis, `OPENROUTER_API_KEY`,
-   `GENERATION_MODEL`, the `BROWSERLESS_*` keys and the `R2_*` keys (the cover URLs are presigned from R2).
+1. **`apps/api/.env`** for the target environment: `MONGO_URI`, Redis, `OPENROUTER_API_KEY`,
+   `GENERATION_MODEL`, the `BROWSERLESS_*` keys and the `R2_*` keys (the cover URLs are presigned from
+   that storage). The `.env.example` defaults point the last two at the local Browserless and MinIO
+   containers from `docker compose up -d`; a production-like eval needs real Browserless and R2 values.
    The script prints nothing from it, but it **does write** to that environment's MongoDB and Redis, so
    check `MONGO_URI` points where you mean it to.
 2. **Design Systems seeded:** `bun run seed:design-systems`. The six launch systems must all be `ACTIVE`

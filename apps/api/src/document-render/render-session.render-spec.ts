@@ -6,20 +6,30 @@ import { DESIGN_SYSTEM_SEED_DIR } from '../design-system/design-system.constants
 import { assemble } from '../document-source/assemble';
 import { judge } from './judge';
 import { remedyOf } from './render-remedy';
-import { renderDocumentSession } from './render-session';
+import { browserlessEndpoint, renderDocumentSession } from './render-session';
 
 /**
- * Test layer 4 (§11.2): the real render session against a local Chrome. Run
- * with `CHROME_PATH=<chrome> bun run test:render`; it is not part of
- * `bun run check`. Chrome is launched once and every render connects to it
- * over its WebSocket, so this exercises the same `puppeteer.connect` session
- * that runs against Browserless.
+ * Test layer 4 (§11.2): the real render session against a real browser. It is
+ * not part of `bun run check`. Run it against either:
+ *
+ * - a local Chrome: `CHROME_PATH=<chrome> bun run test:render`. Chrome is
+ *   launched once and every render connects to it over its WebSocket.
+ * - a Browserless instance (the one `docker compose up -d` starts):
+ *   `BROWSERLESS_URL=http://localhost:3002 BROWSERLESS_TOKEN=local-browserless-token bun run test:render`.
+ *   Every render connects through `browserlessEndpoint`, as production does.
+ *
+ * CHROME_PATH wins when both are set. Either way the renders exercise the same
+ * `puppeteer.connect` session that runs against Browserless.
  */
 const CHROME_PATH = process.env.CHROME_PATH;
-if (!CHROME_PATH) {
+const BROWSERLESS_URL = process.env.BROWSERLESS_URL;
+const BROWSERLESS_TOKEN = process.env.BROWSERLESS_TOKEN;
+if (!CHROME_PATH && !(BROWSERLESS_URL && BROWSERLESS_TOKEN)) {
   throw new Error(
-    'test:render needs a local Chrome: set CHROME_PATH to its executable, ' +
-      'e.g. CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" bun run test:render',
+    'test:render needs a browser: set CHROME_PATH to a local Chrome executable, ' +
+      'e.g. CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" bun run test:render, ' +
+      'or set BROWSERLESS_URL and BROWSERLESS_TOKEN, ' +
+      'e.g. BROWSERLESS_URL=http://localhost:3002 BROWSERLESS_TOKEN=local-browserless-token bun run test:render',
   );
 }
 
@@ -39,9 +49,16 @@ const verdict = (violations: { code: string; page?: number }[]) =>
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47];
 
-let browser: Browser;
+let browser: Browser | undefined;
+
+/** The WebSocket endpoint each render connects to. */
+const endpoint = (): string =>
+  CHROME_PATH
+    ? browser!.wsEndpoint()
+    : browserlessEndpoint(BROWSERLESS_URL!, BROWSERLESS_TOKEN!);
 
 beforeAll(async () => {
+  if (!CHROME_PATH) return;
   // The CI and sandbox user may be root, and outbound HTTPS may need the
   // environment's proxy; neither changes what is rendered.
   const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
@@ -59,7 +76,7 @@ describe('renderDocumentSession', () => {
   describe.each(seeds)('seed $id', ({ definition, sample }) => {
     it('should render with no violations and one PDF page per page element', async () => {
       const result = await renderDocumentSession(
-        browser.wsEndpoint(),
+        endpoint(),
         definition,
         assemble(definition, sample),
       );
@@ -110,7 +127,7 @@ describe('renderDocumentSession', () => {
       'should judge %s as exactly %j',
       async (name, expected, remedy) => {
         const result = await renderDocumentSession(
-          browser.wsEndpoint(),
+          endpoint(),
           margin,
           assemble(margin, corpus(name)),
         );
@@ -129,7 +146,7 @@ describe('renderDocumentSession', () => {
 
     it('should pair text with a backdrop drawn by a positioned ::before', async () => {
       const result = await renderDocumentSession(
-        browser.wsEndpoint(),
+        endpoint(),
         margin,
         assemble(margin, corpus('colour')),
       );
@@ -149,7 +166,7 @@ describe('renderDocumentSession', () => {
 
     it('should name the refused requests when the document reaches out', async () => {
       const result = await renderDocumentSession(
-        browser.wsEndpoint(),
+        endpoint(),
         margin,
         assemble(margin, corpus('egress')),
       );
@@ -164,7 +181,7 @@ describe('renderDocumentSession', () => {
     it('should report a timeout, and print nothing, when the deadline expires', async () => {
       const definition = seeds[0].definition;
       const result = await renderDocumentSession(
-        browser.wsEndpoint(),
+        endpoint(),
         definition,
         assemble(definition, seeds[0].sample),
         { deadlineMs: 1 },

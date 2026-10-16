@@ -59,7 +59,8 @@ Use the Dockerfile. It is the setup verified to work: both processes were booted
 ## Docker
 
 - `apps/api/Dockerfile` is a multi-stage build from the repository root. It installs only `@marquill/api` dependencies with `--frozen-lockfile`, builds under Node, and ships a `node:22-slim` runtime with production dependencies, `dist/`, and `assets/`.
-- The root `docker-compose.yml` provides local infrastructure: `docker compose up -d` starts MongoDB, Redis, and the BullMQ dashboard. `--profile app` also runs the api and worker from the image.
+- The root `docker-compose.yml` provides local infrastructure: `docker compose up -d` starts MongoDB, Redis, the BullMQ dashboard, MinIO (S3 API :9000, console :9001, `minioadmin`/`minioadmin`, bucket `marquill-local` created by `minio-init`), and Browserless (:3002). `--profile app` also runs the api and worker from the image, pointed at `http://minio:9000` and `http://browserless:3000`.
+- MinIO uses the community image `coollabsio/minio`, because MinIO stopped publishing official images. Under `--profile app`, presigned URLs are unreachable from the browser; see `apps/api/AGENTS.md`.
 - The compose project name stays `linkgenserver`, so existing local volumes (`linkgenserver_mongo_data`, `linkgenserver_redis_data`) keep their data.
 - The web and landing apps are not containerised, because they deploy to Vercel.
 

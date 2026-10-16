@@ -753,6 +753,7 @@ Nothing below is in `docs/api/` until then.
 | `DOCUMENT_RUN_DEADLINE` | module constant | 6 min | §7.5 |
 | `DOCUMENT_GENERATION_MAX_OUTPUT_TOKENS` | env var | `16384` | §7.5 |
 | `CHROME_PATH` | env var, test only | local Chrome for `test:render` | §11.2 |
+| `BROWSERLESS_URL` + `BROWSERLESS_TOKEN` | env var, test only | alternative to `CHROME_PATH`: the docker Browserless | §11.2 |
 | Candidate retention on runs | module constant | 90 days | §11.5 |
 
 Module constants change by deploy, never by environment, so a document never renders differently per
@@ -787,7 +788,7 @@ Each DOCUMENT run records a **`documentDiagnostics`** block on `WorkflowRun`:
 | 3. Workflow integration | scripted fake agent and renderer; one test per §7 path: clean; static Repair; exhaustion; render Repair; truncation; in-step retry; transient then checkpoint resume; egress; deletion mid-run; stale contract; persist replay; refine pin carry and `candidate.html` read. Each asserts step events, `step.progress`, meter records (billed vs absorbed) and `failureCode` | yes |
 | 4. Real-browser render | local Chrome against the six samples (no violations; PDF pages = pages) and a hostile/defect corpus, with an exact verdict per fixture | **no**: `bun run test:render`, required before merging renderer or judge changes |
 
-`test:render` reads `CHROME_PATH` and fails clearly when it is unset. `puppeteer-core` stays a
+`test:render` reads `CHROME_PATH`, or `BROWSERLESS_URL` and `BROWSERLESS_TOKEN` (locally `http://localhost:3002` and `local-browserless-token` against the compose Browserless), and fails clearly when neither is set. `puppeteer-core` stays a
 runtime dependency.
 
 **Checker-bypass corpus**, each case asserting the exact `code`:

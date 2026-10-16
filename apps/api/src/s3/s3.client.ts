@@ -16,10 +16,18 @@ const R2_ENV_KEYS = [
   'R2_BUCKET_NAME',
 ] as const;
 
+// R2_ENDPOINT points the client at an S3-compatible server (MinIO locally)
+// instead of Cloudflare R2. Production leaves it unset.
+const customEndpoint = () =>
+  process.env.R2_ENDPOINT?.replace(/\/+$/, '') || undefined;
+
 let _client: S3Client | null = null;
 
 function getClient(): { client: S3Client; bucket: string } {
-  const missing = R2_ENV_KEYS.filter((k) => !process.env[k]);
+  const required = customEndpoint()
+    ? R2_ENV_KEYS.filter((k) => k !== 'R2_ACCOUNT_ID')
+    : R2_ENV_KEYS;
+  const missing = required.filter((k) => !process.env[k]);
   if (missing.length) {
     throw new Error(
       `R2 storage is not configured. Missing env vars: ${missing.join(', ')}`,
@@ -27,14 +35,21 @@ function getClient(): { client: S3Client; bucket: string } {
   }
 
   if (!_client) {
-    _client = new S3Client({
-      region: 'auto',
-      endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-      credentials: {
-        accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-      },
-    });
+    const credentials = {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+    };
+    const endpoint = customEndpoint();
+    _client = new S3Client(
+      endpoint
+        ? // MinIO has no per-bucket DNS names, so it needs path-style URLs.
+          { region: 'us-east-1', endpoint, forcePathStyle: true, credentials }
+        : {
+            region: 'auto',
+            endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+            credentials,
+          },
+    );
   }
 
   return { client: _client, bucket: process.env.R2_BUCKET_NAME! };
@@ -65,6 +80,8 @@ export async function uploadFile(
     );
   }
 
+  const endpoint = customEndpoint();
+  if (endpoint) return `${endpoint}/${bucket}/${key}`;
   return `https://${bucket}.${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${key}`;
 }
 
