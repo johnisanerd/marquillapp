@@ -21,7 +21,7 @@ On 2026-09-25, three repositories were combined into `krispamB/marquillapp`, wit
 
 ## Tooling
 
-- **Bun workspaces** (`apps/*`) with one root `bun.lock`. `bunfig.toml` pins `linker = "hoisted"`: the isolated linker makes mongoose's transitive `mongodb` types unnameable in the api's declaration emit (TS2742), which breaks `nest build`.
+- **Bun workspaces** (`apps/*` and `packages/*`) with one root `bun.lock`. `bunfig.toml` pins `linker = "hoisted"`: the isolated linker makes mongoose's transitive `mongodb` types unnameable in the api's declaration emit (TS2742), which breaks `nest build`.
 - **One React version (19.2.4)** across the workspace. When web was on 19.2.3 and landing on 19.2.4, hoisting gave web two copies of React, and every hook-using component test failed with "Invalid hook call".
 - **Locked versions were preserved.** When the lockfiles were merged, every direct dependency kept the version its old lockfile resolved. The only exceptions are web's React bump above and four patch-level landing devDependencies that deduplicated onto web's versions (Tailwind 4.1.17 → 4.1.18, eslint, `@types/node`).
 - **Turborepo** runs `build`, `typecheck`, `lint`, `test`, and `dev` across the apps. `bun run check` runs typecheck and tests. Lint is kept out of `check` until the existing api and web lint backlog is cleared.

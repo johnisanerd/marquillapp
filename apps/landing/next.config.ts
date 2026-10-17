@@ -3,6 +3,9 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   // Enable static export for optimal performance and deployment flexibility
   output: 'export',
+
+  // The product ledger ships as TypeScript source.
+  transpilePackages: ['@marquill/product'],
   
   // Image optimization settings
   images: {

@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@marquill/product": "workspace:*",
     "@paddle/paddle-js": "^1.6.2",
     "@tailwindcss/postcss": "^4.1.17",
     "@vercel/analytics": "^2.0.1",

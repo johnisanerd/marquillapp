@@ -9,8 +9,8 @@ export default function StatusBoard() {
           What works today. What&apos;s next.
         </h2>
         <p className="mt-3.5 text-[16px] leading-[1.5] text-ink-500 sm:text-[17px]">
-          You can use everything under Live now in the app today. Analytics is the one thing we&apos;re
-          still building.
+          You can use everything under Live now in the app today. Shipping next is what we&apos;re
+          working on.
         </p>
       </div>
 
@@ -24,7 +24,7 @@ export default function StatusBoard() {
           </div>
           <ul className="mt-5 grid gap-2.5 sm:grid-cols-2">
             {liveNow.map((item) => (
-              <li key={item.title} className="rounded-[12px] border border-line bg-accent-tint px-4 py-3.5">
+              <li key={item.id} className="rounded-[12px] border border-line bg-accent-tint px-4 py-3.5">
                 <div className="flex items-center gap-2">
                   <StatusMark status="shipped" />
                   <span className="text-[15px] font-semibold tracking-[-0.01em] text-ink-900">{item.title}</span>
@@ -43,20 +43,22 @@ export default function StatusBoard() {
           </div>
           <ul className="mt-5 flex flex-col gap-2.5">
             {shippingNext.map((item) => (
-              <li key={item.title} className="rounded-[12px] border border-dashed border-line-strong bg-surface px-4 py-3.5">
+              <li key={item.id} className="rounded-[12px] border border-dashed border-line-strong bg-surface px-4 py-3.5">
                 <div className="flex items-center gap-2">
                   <span className="text-[15px] font-semibold tracking-[-0.01em] text-ink-900">{item.title}</span>
                   <span className="ff-mono rounded-full border border-line px-2 py-[1px] text-[10.5px] uppercase tracking-[0.06em] text-ink-500">
-                    In progress
+                    {item.status === 'building' ? 'In progress' : 'Planned'}
                   </span>
                 </div>
                 <p className="mt-1 text-[13.5px] leading-[1.45] text-ink-500">{item.body}</p>
                 {/* Analytics placeholder bars, drawn in outline to read as "not yet" */}
-                <div className="mt-3.5 flex h-12 items-end gap-1.5" aria-hidden="true">
-                  {[40, 62, 35, 78, 54, 90, 66].map((h, i) => (
-                    <span key={i} className="flex-1 rounded-t-[3px] border border-b-0 border-dashed border-ink-300" style={{ height: `${h}%` }} />
-                  ))}
-                </div>
+                {item.id === 'post-analytics' && (
+                  <div className="mt-3.5 flex h-12 items-end gap-1.5" aria-hidden="true">
+                    {[40, 62, 35, 78, 54, 90, 66].map((h, i) => (
+                      <span key={i} className="flex-1 rounded-t-[3px] border border-b-0 border-dashed border-ink-300" style={{ height: `${h}%` }} />
+                    ))}
+                  </div>
+                )}
               </li>
             ))}
           </ul>
