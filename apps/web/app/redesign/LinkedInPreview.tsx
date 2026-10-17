@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 import type { ConnectedAccount, UserProfile } from "../lib/types";
+import LinkedInPostActions from "./LinkedInPostActions";
 
 export default function LinkedInPreview({
   user,
@@ -89,8 +90,7 @@ export default function LinkedInPreview({
           )}
         </div>
       ) : null}
-      <div className="mq-linkedin-stats"><span>👍 Liked by 240 others</span><span>38 comments</span></div>
-      <div className="mq-linkedin-actions"><span>Like</span><span>Comment</span><span>Repost</span><span>Send</span></div>
+      <LinkedInPostActions avatarUrl={profileImageUrl} initials={initials} />
       <p className="mq-preview-cutoff-note">Mobile fold: 3 lines · approximately 140 characters</p>
     </div>
   );

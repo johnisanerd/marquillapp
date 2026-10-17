@@ -10,6 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { ConnectedAccount, UserProfile } from "../lib/types";
+import LinkedInPostActions from "./LinkedInPostActions";
 import type { ArtifactDetailData } from "./artifactTypes";
 import { ArtifactContentView } from "./ArtifactCompositionContent";
 import type { ComposerPostMediaItem } from "./postMedia";
@@ -207,7 +208,7 @@ export default function PostCompositionPreview({
         </div>
       ) : null}
 
-      <div className="mq-linkedin-actions"><span>Like</span><span>Comment</span><span>Repost</span><span>Send</span></div>
+      <LinkedInPostActions avatarUrl={profileImageUrl} initials={initials} />
     </div>
   );
 }

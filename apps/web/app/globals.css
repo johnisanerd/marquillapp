@@ -984,8 +984,22 @@ html[data-theme="dark"] .mq-schedule-theme { --surface:#161614;--surface-2:#1e1e
 .mq-stock-state button { padding: 7px 11px; border: 1px solid #c9cccf; border-radius: 6px; background: #fff; color: #34363a; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .mq-stock-state-error { color: #b33c3c; }
 @keyframes mq-stock-shimmer { to { background-position-x: -200%; } }
-.mq-linkedin-stats, .mq-linkedin-actions { display: flex; align-items: center; justify-content: space-between; padding: 9px 14px; border-bottom: 1px solid var(--line-faint); color: var(--ink-500); font-size: 11px; }
-.mq-linkedin-actions { justify-content: space-around; padding: 6px 8px; border: 0; font-weight: 600; }
+/* LinkedIn's social row, measured from its app: 24px avatar and caret, then
+   ~19px icons with a 7px gap to their count and ~18px between actions. */
+.mq-linkedin-social { display: flex; min-height: 48px; align-items: center; gap: 18px; margin-top: 4px; padding: 10px 16px 12px; border-top: 1px solid var(--line-faint); color: var(--ink-500); font-size: 14px; font-variant-numeric: tabular-nums; }
+.mq-linkedin-react-as { display: inline-flex; flex: none; align-items: center; gap: 7px; margin-right: -2px; }
+.mq-linkedin-react-as img, .mq-linkedin-react-as > span { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+.mq-linkedin-react-as > span { display: inline-grid; place-items: center; background: var(--canvas-sub); color: var(--ink-700); font-size: 9px; font-weight: 700; }
+.mq-linkedin-react-caret { color: var(--ink-500); transform: rotate(180deg); }
+.mq-linkedin-social-action { display: inline-flex; flex: none; align-items: center; gap: 7px; line-height: 1; }
+.mq-linkedin-social-action svg { flex: none; }
+.mq-linkedin-comment-icon { transform: scaleX(-1); }
+.mq-linkedin-reaction-stack { display: inline-flex; flex: none; margin-left: auto; }
+.mq-linkedin-reaction-stack > span { display: inline-grid; width: 17px; height: 17px; place-items: center; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--surface); }
+.mq-linkedin-reaction-stack > span + span { margin-left: -4px; }
+.mq-linkedin-reaction-stack .is-like { z-index: 3; background: #378fe9; color: #fff; }
+.mq-linkedin-reaction-stack .is-love { z-index: 2; background: #df704d; color: #fff; }
+.mq-linkedin-reaction-stack .is-insightful { z-index: 1; background: #f5bb5c; color: #7a4b00; }
 .mq-schedule-card { padding: 14px; }
 .mq-schedule-card h2 { margin: 0 0 11px; font-size: 13px; }
 .mq-schedule-card .mq-segmented { display: flex; margin-bottom: 12px; }
