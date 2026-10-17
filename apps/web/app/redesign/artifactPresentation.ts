@@ -11,3 +11,9 @@ export const artifactTypeIcons: Record<ArtifactType, LucideIcon> = {
   POLL: BarChart3,
   DOCUMENT: GalleryHorizontal,
 };
+
+export const artifactTypeLabels: Record<ArtifactType, string> = {
+  POST: "Post",
+  POLL: "Poll",
+  DOCUMENT: "Carousel",
+};

@@ -20,6 +20,10 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 
 type RendererProps = Omit<PdfPreviewProps, "ariaLabel" | "className">;
 
+// LinkedIn carousels are usually 4:5; the first page replaces this once it loads.
+const DEFAULT_PAGE_ASPECT = 4 / 5;
+const MIN_FITTED_PAGE_HEIGHT = 240;
+
 type DragState = {
   pointerId: number;
   startX: number;
@@ -31,6 +35,9 @@ export default function PdfPreviewRenderer({
   title,
   pageCountHint,
   openHref,
+  showHeader = true,
+  fitViewportOffset,
+  maxPageWidth = 560,
   onPageChange,
 }: RendererProps) {
   const railRef = useRef<HTMLDivElement>(null);
@@ -41,6 +48,7 @@ export default function PdfPreviewRenderer({
   const [numPages, setNumPages] = useState<number | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageWidth, setPageWidth] = useState(280);
+  const [pageAspect, setPageAspect] = useState(DEFAULT_PAGE_ASPECT);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -70,15 +78,24 @@ export default function PdfPreviewRenderer({
     if (!rail) return;
 
     const updateWidth = () => {
-      setPageWidth(Math.min(560, Math.max(180, rail.clientWidth - 36)));
+      let width = Math.min(maxPageWidth, rail.clientWidth - 36);
+      if (typeof fitViewportOffset === "number") {
+        const fittedHeight = Math.max(MIN_FITTED_PAGE_HEIGHT, window.innerHeight - fitViewportOffset);
+        width = Math.min(width, fittedHeight * pageAspect);
+      }
+      setPageWidth(Math.max(180, Math.floor(width)));
     };
     updateWidth();
 
-    if (!("ResizeObserver" in window)) return;
+    window.addEventListener("resize", updateWidth);
+    if (!("ResizeObserver" in window)) return () => window.removeEventListener("resize", updateWidth);
     const observer = new ResizeObserver(updateWidth);
     observer.observe(rail);
-    return () => observer.disconnect();
-  }, [error, numPages]);
+    return () => {
+      window.removeEventListener("resize", updateWidth);
+      observer.disconnect();
+    };
+  }, [error, fitViewportOffset, maxPageWidth, numPages, pageAspect]);
 
   useEffect(() => {
     if (!numPages) return;
@@ -183,17 +200,19 @@ export default function PdfPreviewRenderer({
 
   return (
     <>
-      <header className="mq-pdf-preview-head">
-        <span>
-          {title ? <strong>{title}</strong> : null}
-          <small>{displayedPageCount ? `${displayedPageCount} pages · PDF` : "PDF document"}</small>
-        </span>
-        {openHref ? (
-          <a href={openHref} target="_blank" rel="noreferrer">
-            Open PDF <ExternalLink size={13} />
-          </a>
-        ) : null}
-      </header>
+      {showHeader ? (
+        <header className="mq-pdf-preview-head">
+          <span>
+            {title ? <strong>{title}</strong> : null}
+            <small>{displayedPageCount ? `${displayedPageCount} pages · PDF` : "PDF document"}</small>
+          </span>
+          {openHref ? (
+            <a href={openHref} target="_blank" rel="noreferrer">
+              Open PDF <ExternalLink size={13} />
+            </a>
+          ) : null}
+        </header>
+      ) : null}
 
       <Document
         key={attempt}
@@ -227,9 +246,13 @@ export default function PdfPreviewRenderer({
                   width={pageWidth}
                   renderTextLayer={false}
                   renderAnnotationLayer={false}
+                  onLoadSuccess={index === 0 ? (page) => {
+                    const { originalWidth, originalHeight } = page;
+                    if (originalWidth > 0 && originalHeight > 0) setPageAspect(originalWidth / originalHeight);
+                  } : undefined}
                   onLoadError={handlePageError}
                   onRenderError={handlePageError}
-                  loading={<div className="mq-pdf-preview-page-loading" aria-hidden="true" />}
+                  loading={<div className="mq-pdf-preview-page-loading" style={{ width: pageWidth, aspectRatio: pageAspect }} aria-hidden="true" />}
                   error={<div className="mq-pdf-preview-page-error">Page unavailable</div>}
                 />
               </div>
