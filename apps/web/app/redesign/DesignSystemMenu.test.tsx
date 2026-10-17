@@ -15,6 +15,7 @@ const systems: DesignSystemSummary[] = [
     version: 1,
     name: "Margin",
     summary: "Quiet Swiss minimalism.",
+    colors: { text: "#0a0a0a", background: "#ffffff", accent: "#6e6e6e" },
     previews: [
       "/api/v1/design-systems/margin/1/previews/1.png",
       "/api/v1/design-systems/margin/1/previews/2.png",
@@ -25,6 +26,7 @@ const systems: DesignSystemSummary[] = [
     version: 2,
     name: "Afterglow",
     summary: "Warm gradients on dark.",
+    colors: { text: "#f7f3ff", background: "#0d0b1f", accent: "#7c3aed" },
     previews: ["/api/v1/design-systems/afterglow/2/previews/1.png"],
   },
   { id: "schematic", version: 1, name: "Schematic", summary: "", previews: [] },
@@ -49,6 +51,8 @@ function renderMenu(overrides: Partial<Parameters<typeof DesignSystemMenu>[0]> =
 const trigger = (view: RenderResult) => view.getByRole("button", { name: "Design: Margin" });
 const row = (view: RenderResult, name: string) => view.getByRole("menuitemradio", { name });
 const preview = (view: RenderResult) => view.queryByRole("tooltip");
+const swatch = (element: HTMLElement) => element.querySelector<HTMLElement>(".mq-design-swatch");
+const MARGIN_WHEEL = "conic-gradient(#ffffff 0 120deg, #0a0a0a 120deg 240deg, #6e6e6e 240deg 360deg)";
 
 function open(view: RenderResult) {
   fireEvent.click(trigger(view), { detail: 1 });
@@ -59,8 +63,8 @@ describe("DesignSystemMenu", () => {
     const { view } = renderMenu();
 
     expect(trigger(view).getAttribute("aria-expanded")).toBe("false");
-    expect(trigger(view).querySelector(".mq-design-swatch img")?.getAttribute("src"))
-      .toBe("/api/v1/design-systems/margin/1/previews/1.png");
+    expect(swatch(trigger(view))?.style.background).toBe(MARGIN_WHEEL);
+    expect(trigger(view).querySelector("img")).toBeNull();
     expect(view.queryByRole("menu")).toBeNull();
   });
 
@@ -72,8 +76,12 @@ describe("DesignSystemMenu", () => {
     const rows = view.getAllByRole("menuitemradio");
     expect(rows.map((item) => item.textContent)).toEqual(["Margin", "Afterglow", "Schematic"]);
     expect(rows.map((item) => item.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
-    expect(rows[0].querySelector(".mq-design-swatch img")?.getAttribute("src"))
-      .toBe("/api/v1/design-systems/margin/1/previews/1.png");
+    expect(swatch(rows[0])?.style.background).toBe(MARGIN_WHEEL);
+    // A system without colours falls back to the palette icon.
+    expect(swatch(rows[2])?.style.background).toBe("");
+    expect(swatch(rows[2])?.querySelector("svg")).toBeTruthy();
+    // Sample pages load only in the hover card, never in the list.
+    expect(view.getByRole("menu").querySelector("img")).toBeNull();
   });
 
   test("offers a disabled 'Create your own design system' that cannot be selected or focused", () => {

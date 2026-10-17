@@ -32,6 +32,7 @@ const makeController = () => {
         version: 1,
         name: 'Margin',
         summary: 'Quiet.',
+        colors: { text: '#0a0a0a', background: '#ffffff', accent: '#6e6e6e' },
         previews: ['/api/v1/design-systems/margin/1/previews/1.png'],
       },
     ]),
