@@ -38,6 +38,20 @@ describe("parseDesignSystems", () => {
   });
 });
 
+describe("parseDesignSystems colors", () => {
+  test("keeps the text, background and accent hexes", () => {
+    const colors = { text: "#0a0a0a", background: "#ffffff", accent: "#6e6e6e" };
+    expect(parseDesignSystems([{ ...margin, colors }])[0].colors).toEqual(colors);
+  });
+
+  test("drops colors when any hex is missing or malformed", () => {
+    expect(parseDesignSystems([{ ...margin, colors: { text: "#000", background: "#ffffff", accent: "#6e6e6e" } }])[0])
+      .not.toHaveProperty("colors");
+    expect(parseDesignSystems([{ ...margin, colors: { text: "#0a0a0a", background: "#ffffff" } }])[0])
+      .not.toHaveProperty("colors");
+  });
+});
+
 describe("resolveDesignSystemId", () => {
   test("preselects the default, which the API lists first", () => {
     expect(resolveDesignSystemId([margin, afterglow])).toBe("margin");

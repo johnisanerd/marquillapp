@@ -137,7 +137,7 @@ export const features: Feature[] = [
     name: 'Design System swatch menu',
     area: 'documents',
     status: 'live',
-    summary: 'A swatch menu in Artifact Studio and refine; hovering a system previews it before you pick.',
+    summary: 'A swatch menu in Artifact Studio and refine. Each system shows a three-way colour wheel of its background, text, and accent; hovering it previews the sample pages before you pick.',
     since: '2026-10-15',
     issues: [198, 177],
   },

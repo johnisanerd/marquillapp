@@ -24,18 +24,18 @@ const VIEWPORT_MARGIN = 12;
 
 const FOCUS_STEPS = { ArrowDown: 1, ArrowUp: -1, Home: "first", End: "last" } as const;
 
-/** The first preview page, cropped round, stands in for a colour the API does not give. */
+/** The system's background, text and accent hexes, split three ways round a wheel. */
 function Swatch({ system }: { system?: DesignSystemSummary }) {
-  const source = system?.previews[0];
+  const colors = system?.colors;
   return (
-    <span className="mq-design-swatch" aria-hidden="true">
-      {source ? (
-        // Same-origin path from the API, served through the /api/v1 rewrite.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={source} alt="" width={22} height={22} loading="lazy" />
-      ) : (
-        <Palette size={12} />
-      )}
+    <span
+      className="mq-design-swatch"
+      aria-hidden="true"
+      style={colors ? {
+        background: `conic-gradient(${colors.background} 0 120deg, ${colors.text} 120deg 240deg, ${colors.accent} 240deg 360deg)`,
+      } : undefined}
+    >
+      {colors ? null : <Palette size={12} />}
     </span>
   );
 }
@@ -72,8 +72,9 @@ function PreviewCard({
 }
 
 /**
- * A compact swatch pill that opens a menu of Design Systems; hovering or arrowing to
- * a row floats a larger card with that system's sample pages beside the menu.
+ * A compact swatch pill that opens a menu of Design Systems, each row marked by its
+ * colour wheel; only hovering or arrowing to a row floats a larger card with that
+ * system's sample pages beside the menu.
  *
  * `createOwn` adds the disabled "Create your own design system" action, and `keepLabel`
  * a leading "no change" choice (value `KEEP_DESIGN_SYSTEM`). The menu opens upward and

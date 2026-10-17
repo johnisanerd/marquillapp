@@ -13,6 +13,7 @@ import {
   DesignSystem,
   DesignSystemStatus,
 } from '../database/schemas/design-system.schema';
+import type { DesignSystemDefinition } from './design-system-definition';
 import { previewImages, readSeedChecksums } from './design-system-seed';
 import {
   DEFAULT_DESIGN_SYSTEM_ID,
@@ -30,8 +31,16 @@ export interface DesignSystemSummary {
   version: number;
   name: string;
   summary: string;
+  /** The three hexes a picker swatch shows. */
+  colors: DesignSystemColors;
   /** API paths of the preview images, in page order. */
   previews: string[];
+}
+
+export interface DesignSystemColors {
+  text: string;
+  background: string;
+  accent: string;
 }
 
 /** An exact Design System Version a document version is pinned to. */
@@ -44,6 +53,26 @@ const cacheKey = (id: string, version: number) => `${id}@${version}`;
 
 const previewPath = (id: string, version: number, page: number) =>
   `/api/v1/design-systems/${id}/${version}/previews/${page}.png`;
+
+/**
+ * A system's swatch: the page ground, its first text colour, and its first
+ * accent. A palette without an accent (Margin) borrows its next text colour,
+ * then a border, so the swatch still shows three tones.
+ */
+export function swatchColors({
+  page,
+  palette,
+}: DesignSystemDefinition): DesignSystemColors {
+  const { tokens } = palette;
+  const byRole = (role: (typeof tokens)[number]['role']) =>
+    tokens.filter((t) => t.role === role);
+  const texts = byRole('text');
+  const background =
+    tokens.find((t) => t.name === page.background) ?? byRole('background')[0];
+  const text = texts[0] ?? tokens[0];
+  const accent = byRole('accent')[0] ?? texts[1] ?? byRole('border')[0] ?? text;
+  return { text: text.hex, background: background.hex, accent: accent.hex };
+}
 
 /**
  * Reads and selection for app-owned Design Systems (document generation spec
@@ -115,11 +144,12 @@ export class DesignSystemsService implements OnModuleInit {
             Number(a.id === DEFAULT_DESIGN_SYSTEM_ID) ||
           a.id.localeCompare(b.id),
       )
-      .map(({ id, version, name, summary }) => ({
+      .map(({ id, version, name, summary, definition }) => ({
         id,
         version,
         name,
         summary,
+        colors: swatchColors(definition),
         previews: (this.previews.get(id) ?? []).map((_, i) =>
           previewPath(id, version, i + 1),
         ),

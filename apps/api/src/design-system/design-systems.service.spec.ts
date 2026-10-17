@@ -110,6 +110,7 @@ describe('DesignSystemsService', () => {
         name: 'Margin',
       });
       expect(Object.keys(list[0]).sort()).toEqual([
+        'colors',
         'id',
         'name',
         'previews',
@@ -123,6 +124,26 @@ describe('DesignSystemsService', () => {
         'overprint',
         'schematic',
       ]);
+    });
+
+    it('should give each system its text, background and accent hexes', async () => {
+      await service.onModuleInit();
+
+      const colors = Object.fromEntries(
+        service.listActive().map((item) => [item.id, item.colors]),
+      );
+
+      expect(colors.afterglow).toEqual({
+        text: '#f7f3ff',
+        background: '#0d0b1f',
+        accent: '#7c3aed',
+      });
+      // Margin has no accent token, so it borrows its secondary text colour.
+      expect(colors.margin).toEqual({
+        text: '#0a0a0a',
+        background: '#ffffff',
+        accent: '#6e6e6e',
+      });
     });
 
     it('should list preview API paths in page order', async () => {

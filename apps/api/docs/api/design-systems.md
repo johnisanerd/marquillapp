@@ -21,6 +21,11 @@ type DesignSystemSummary = {
   version: number; // the ACTIVE version
   name: string;
   summary: string;
+  colors: {
+    text: string; // 6-digit hex, e.g. "#0a0a0a"
+    background: string; // the page ground
+    accent: string;
+  };
   previews: string[]; // API paths, in page order
 };
 ```
@@ -32,6 +37,7 @@ type DesignSystemSummary = {
     "version": 1,
     "name": "Margin",
     "summary": "Quiet Swiss minimalism. One sans family, small type, a fixed baseline, and most of the page left empty.",
+    "colors": { "text": "#0a0a0a", "background": "#ffffff", "accent": "#6e6e6e" },
     "previews": [
       "/api/v1/design-systems/margin/1/previews/1.png",
       "/api/v1/design-systems/margin/1/previews/2.png"
@@ -39,6 +45,11 @@ type DesignSystemSummary = {
   }
 ]
 ```
+
+`colors` are the system's swatch: `background` is the page ground, `text` its
+first text colour, and `accent` its first accent. A palette with no accent
+token gives its second text colour instead, then a border colour, so all three
+are always present.
 
 `previews` are paths on the API origin. Resolve them against the origin the
 client already uses for `/api/v1` (on the web app, its own origin), and send
