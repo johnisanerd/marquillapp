@@ -1,8 +1,9 @@
 import Hero from '@/components/landing/Hero';
-import MadeWithMark from '@/components/landing/MadeWithMark';
+import StatusBoard from '@/components/landing/StatusBoard';
 import WhatMarkMakes from '@/components/landing/WhatMarkMakes';
+import DesignSystems from '@/components/landing/DesignSystems';
 import OneWorkspace from '@/components/landing/OneWorkspace';
-import Spotlight from '@/components/landing/Spotlight';
+import Changelog from '@/components/landing/Changelog';
 import Pricing from '@/components/landing/Pricing';
 import ClosingCta from '@/components/landing/ClosingCta';
 import { normalizeAppUrl } from '@/config/urls';
@@ -10,15 +11,15 @@ import { normalizeAppUrl } from '@/config/urls';
 export const metadata = {
   title: 'Marquill — Meet Mark, your LinkedIn agent',
   description:
-    'Give Mark a topic. He reads the top videos and threads on it, drafts the post in your voice, and publishes on your schedule.',
+    'Mark, the LinkedIn agent, is in public beta. He researches your topic, writes posts and polls, designs carousels and one-pagers in six Design Systems, and schedules them to your profile or company page.',
   keywords:
-    'AI LinkedIn agent, AI LinkedIn workspace, LinkedIn post generator, LinkedIn carousels, LinkedIn polls, content scheduling, personal branding',
+    'AI LinkedIn agent, LinkedIn post generator, LinkedIn carousel maker, LinkedIn document posts, LinkedIn polls, LinkedIn scheduling, company page publishing',
   alternates: {
     canonical: 'https://marquill.com',
   },
   openGraph: {
     title: 'Marquill — Meet Mark, your LinkedIn agent',
-    description: 'Just tell Mark what to post. He writes it, designs it, and ships it.',
+    description: 'Mark makes your LinkedIn posts, polls, and carousels. Public beta, free plan, no card.',
     type: 'website',
     locale: 'en_US',
     url: 'https://marquill.com',
@@ -27,7 +28,7 @@ export const metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'Marquill — Meet Mark, your LinkedIn agent',
-    description: 'Just tell Mark what to post. He writes it, designs it, and ships it.',
+    description: 'Mark makes your LinkedIn posts, polls, and carousels. Public beta, free plan, no card.',
     images: ['/og-image.png'],
   },
 };
@@ -44,7 +45,7 @@ export default function Home() {
         applicationCategory: 'BusinessApplication',
         operatingSystem: 'Web',
         description:
-          'Marquill is an AI LinkedIn workspace. Mark, the LinkedIn agent, drafts posts, designs carousels, builds polls, and schedules publishing across every account.',
+          'Marquill is an AI LinkedIn workspace in public beta. Mark, the LinkedIn agent, researches a topic, writes posts and polls, designs carousels and one-pagers in six Design Systems, and schedules publishing to personal profiles and company pages.',
         url: 'https://marquill.com',
         offers: [
           { '@type': 'Offer', price: '0', priceCurrency: 'USD', name: 'Free Plan' },
@@ -73,11 +74,12 @@ export default function Home() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
-      <Hero />
-      <MadeWithMark />
+      <Hero appUrl={appUrl} />
+      <StatusBoard />
       <WhatMarkMakes />
+      <DesignSystems />
       <OneWorkspace />
-      <Spotlight />
+      <Changelog />
       <Pricing appUrl={appUrl} />
       <ClosingCta appUrl={appUrl} />
     </>

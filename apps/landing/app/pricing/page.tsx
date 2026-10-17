@@ -1,5 +1,5 @@
 import { Check } from 'lucide-react';
-import { plans, faqs } from '@/components/landing/data';
+import { plans, faqs, highlightLabel } from '@/components/landing/data';
 import { normalizeAppUrl } from '@/config/urls';
 
 export const metadata = {
@@ -45,8 +45,8 @@ export default function PricingPage() {
                             <div className="flex min-h-6 items-center justify-between">
                                 <span className="text-[15px] font-semibold text-ink-900">{plan.name}</span>
                                 {plan.popular && (
-                                    <span className="rounded-full bg-accent px-2.5 py-1 text-[11px] font-semibold text-white">
-                                        Most popular
+                                    <span className="rounded-full bg-accent px-2.5 py-1 text-[11px] font-semibold text-on-accent">
+                                        {highlightLabel}
                                     </span>
                                 )}
                             </div>

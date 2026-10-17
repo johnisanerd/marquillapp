@@ -47,6 +47,11 @@
   --accent:      #2a6fdb;
   --accent-soft: rgba(42, 111, 219, 0.12);
   --accent-ink:  #1f56b0;
+  /* Derived from the accent: text on solid accent, a faint tinted surface,
+     and a hairline for tinted panels. Used for the beta/status language. */
+  --on-accent:   #ffffff;
+  --accent-tint: rgba(42, 111, 219, 0.05);
+  --accent-line: rgba(42, 111, 219, 0.28);
 
   /* Elevation */
   --sh-xs: 0 1px 2px rgba(16,16,15,.04);
@@ -85,7 +90,10 @@
 
   --accent:      #5a90f2;
   --accent-soft: rgba(90, 144, 242, 0.16);
-  --accent-ink:  #5a90f2;
+  --accent-ink:  #8db3f7;
+  --on-accent:   #0a0a0a;
+  --accent-tint: rgba(90, 144, 242, 0.07);
+  --accent-line: rgba(90, 144, 242, 0.34);
 
   --sh-xs: 0 1px 2px rgba(0,0,0,.40);
   --sh-sm: 0 1px 2px rgba(0,0,0,.40), 0 1px 3px rgba(0,0,0,.30);
@@ -121,6 +129,9 @@
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
   --color-accent-ink: var(--accent-ink);
+  --color-on-accent: var(--on-accent);
+  --color-accent-tint: var(--accent-tint);
+  --color-accent-line: var(--accent-line);
 
   --color-inverse-bg: var(--inverse-bg);
   --color-inverse-fg: var(--inverse-fg);
@@ -148,6 +159,22 @@
 
 /* The mark assets are static SVGs; layer the dark-theme variation only when
    the component is allowed to follow the active theme. */
+/* Faint drafting grid behind the hero, faded out toward the edges. */
+.mq-grid {
+  background-image:
+    linear-gradient(to right, var(--line-faint) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--line-faint) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 30%, transparent 75%);
+}
+
+/* Accent glow built from the accent token, used under the hero and the feedback panel. */
+.mq-glow {
+  background:
+    radial-gradient(ellipse 55% 45% at 50% 0%, var(--accent-soft), transparent 70%),
+    radial-gradient(ellipse 35% 30% at 85% 85%, var(--accent-tint), transparent 70%);
+}
+
 .mq-mark { display: inline-grid; flex: none; }
 .mq-mark > img { grid-area: 1 / 1; width: 100%; height: 100%; }
 .mq-mark__light { display: none; }
@@ -220,14 +247,16 @@
 @keyframes mqBlink   { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
 @keyframes mqMarquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
 @keyframes mqFloat   { 0%,100% { transform: translateY(-7px); } 50% { transform: translateY(7px); } }
+@keyframes mqSweep   { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 
 .animate-mq-pulse   { animation: mqPulse 1.8s var(--ease) infinite; }
 .animate-mq-blink   { animation: mqBlink 1.05s step-end infinite; }
 .animate-mq-marquee { animation: mqMarquee 46s linear infinite; }
 .animate-mq-float   { animation: mqFloat 8s ease-in-out infinite; }
+.animate-mq-sweep   { animation: mqSweep 1.9s var(--ease) infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-mq-pulse, .animate-mq-blink, .animate-mq-marquee, .animate-mq-float { animation: none; }
+  .animate-mq-pulse, .animate-mq-blink, .animate-mq-marquee, .animate-mq-float, .animate-mq-sweep { animation: none; }
 }
 
 /* ============================================================

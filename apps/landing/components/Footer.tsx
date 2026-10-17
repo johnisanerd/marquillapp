@@ -17,7 +17,7 @@ export default function Footer() {
           <div className="space-y-4">
             <MarquillLockup size={28} />
             <p className="max-w-xs text-[14px] leading-relaxed text-ink-500">
-              Mark researches your topic, drafts the post, and publishes on your schedule.
+              Mark researches your topic, makes the post, poll, or document, and publishes it on your schedule. In public beta.
             </p>
           </div>
 
@@ -25,7 +25,10 @@ export default function Footer() {
             <h3 className="mb-4 text-[13px] font-semibold text-ink-900">Product</h3>
             <ul className="space-y-3 text-[14px]">
               <li><Link href="/#what-mark-makes" className="text-ink-500 transition-colors hover:text-ink-900">What Mark makes</Link></li>
+              <li><Link href="/#design-systems" className="text-ink-500 transition-colors hover:text-ink-900">Design Systems</Link></li>
               <li><Link href="/#one-workspace" className="text-ink-500 transition-colors hover:text-ink-900">One workspace</Link></li>
+              <li><Link href="/#status" className="text-ink-500 transition-colors hover:text-ink-900">Status board</Link></li>
+              <li><Link href="/#changelog" className="text-ink-500 transition-colors hover:text-ink-900">Changelog</Link></li>
               <li><Link href="/#pricing" className="text-ink-500 transition-colors hover:text-ink-900">Pricing</Link></li>
               <li><Link href="/blog" className="text-ink-500 transition-colors hover:text-ink-900">Blog</Link></li>
             </ul>
@@ -49,6 +52,7 @@ export default function Footer() {
                   hello@marquill.com
                 </a>
               </li>
+              <li><Link href="/#feedback" className="transition-colors hover:text-ink-900">Send beta feedback</Link></li>
             </ul>
           </div>
         </div>
