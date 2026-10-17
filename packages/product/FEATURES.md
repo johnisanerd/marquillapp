@@ -22,7 +22,10 @@ Every feature Marquill has, is building, or has discussed. `live` means deployed
 
 | Id | Feature | Status | Date | What it does | Landing; plans | Links |
 | --- | --- | --- | --- | --- | --- | --- |
-| `documents` | Documents | live | 2026-08-06 | Mark makes a DOCUMENT Artifact (a one-pager or a multi-slide carousel), rendered to PDF and published as a LinkedIn document post.<br>_The template carousels are replaced by Design System documents once the cutover (#177) runs._ | board | #115, #121, [document-generation-spec.md](../../apps/api/docs/document-generation-spec.md), [carousel-template-system-design.md](../../apps/api/docs/carousel-template-system-design.md) |
+| `documents` | Documents | live | 2026-08-06 | Mark makes a DOCUMENT Artifact (a one-pager or a multi-slide carousel), rendered to PDF and published as a LinkedIn document post.<br>_Documents are now made from a Design System; the template carousels were retired in the #177 cutover._ | board | #115, #121, [document-generation-spec.md](../../apps/api/docs/document-generation-spec.md), [carousel-template-system-design.md](../../apps/api/docs/carousel-template-system-design.md) |
+| `design-systems` | Design Systems for documents | live | 2026-10-15 | Six app-owned Design Systems (Afterglow, Broadside, Colophon, Margin, Overprint, Schematic). Mark writes a Candidate Source against the chosen system, it is checked, rendered, and repaired.<br>_Systems that fail the eval ship in UNLISTED_DESIGN_SYSTEMS, so the live set can be smaller than six._<br>_The go-live date is the merge date; #177 has no recorded cutover date._ | board | #177, #191, #193, #198, [document-generation-spec.md](../../apps/api/docs/document-generation-spec.md), [design-systems.md](../../apps/api/docs/api/design-systems.md) |
+| `document-refine-from-source` | Refine a document from its Candidate Source | live | 2026-10-14 | A document refine edits the previous Candidate Source instead of starting over, so unchanged pages stay put. |  | #171, #172, #177 |
+| `design-system-picker` | Design System swatch menu | live | 2026-10-15 | A swatch menu in Artifact Studio and refine; hovering a system previews it before you pick. |  | #198, #177 |
 
 ### Research
 
@@ -84,9 +87,7 @@ Every feature Marquill has, is building, or has discussed. `live` means deployed
 
 | Id | Feature | Status | Date | What it does | Landing; plans | Links |
 | --- | --- | --- | --- | --- | --- | --- |
-| `design-systems` | Design Systems for documents | building |  | Six app-owned Design Systems (Afterglow, Broadside, Colophon, Margin, Overprint, Schematic). Mark writes a Candidate Source against the chosen system, it is checked, rendered, and repaired.<br>_Merged to main 2026-10-15. Flip to live once the production cutover in #177 is recorded._<br>_Systems that fail the eval ship in UNLISTED_DESIGN_SYSTEMS, so the live set may be smaller than six._ | board | #177, #191, #193, #198, [document-generation-spec.md](../../apps/api/docs/document-generation-spec.md), [design-systems.md](../../apps/api/docs/api/design-systems.md) |
-| `document-refine-from-source` | Refine a document from its Candidate Source | building |  | A document refine edits the previous Candidate Source instead of starting over, so unchanged pages stay put.<br>_Merged to main 2026-10-14. Ships with the #177 cutover._ |  | #171, #172, #177 |
-| `design-system-picker` | Design System swatch menu | building |  | A swatch menu in Artifact Studio and refine; hovering a system previews it before you pick.<br>_Merged to main 2026-10-15. Ships with the #177 cutover._ |  | #198, #177 |
+| `custom-design-systems` | Create a Design System | planned |  | Users create a Design System of their own and use it for one-pagers and carousels, alongside the six app-owned ones. | board | #204, [document-generation-spec.md](../../apps/api/docs/document-generation-spec.md) |
 
 ### Insights
 
@@ -133,9 +134,9 @@ Every feature Marquill has, is building, or has discussed. `live` means deployed
 
 | Date | Feature | Entry | Published |
 | --- | --- | --- | --- |
-| 2026-10-15 | `design-system-picker` | **Swatch menu with hover preview**: Hover over a Design System to preview it before you pick. | draft |
-| 2026-10-15 | `design-systems` | **Design Systems for documents**: Six designed systems for one-pagers and carousels, chosen per document. | draft |
-| 2026-10-14 | `document-refine-from-source` | **Refine a document from its source**: Mark edits the document he already made, so the parts you liked stay put. | draft |
+| 2026-10-15 | `design-system-picker` | **Swatch menu with hover preview**: Hover over a Design System to preview it before you pick. | yes |
+| 2026-10-15 | `design-systems` | **Design Systems for documents**: Six designed systems for one-pagers and carousels, chosen per document. | yes |
+| 2026-10-14 | `document-refine-from-source` | **Refine a document from its source**: Mark edits the document he already made, so the parts you liked stay put. | yes |
 | 2026-08-06 | `polls` | **Polls**: Ask Mark for a poll and publish it as a native LinkedIn poll. | yes |
 | 2026-08-06 | `documents` | **Documents**: One-pagers and carousels, rendered to PDF and published as a LinkedIn document. | yes |
 | 2026-07-18 | `run-progress` | **Live progress**: Watch each step as Mark researches, writes, and renders. | yes |
