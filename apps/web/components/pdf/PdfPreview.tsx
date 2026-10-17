@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import PdfPreviewLoading from "./PdfPreviewLoading";
 
 export type PdfSource = string | File | ArrayBuffer | Uint8Array;
@@ -13,6 +13,14 @@ export type PdfPreviewProps = {
   openHref?: string;
   ariaLabel?: string;
   className?: string;
+  /** Hide the title row when the surrounding card already names the PDF. */
+  showHeader?: boolean;
+  /**
+   * Vertical space, in px, the rest of the screen needs around a page. Pages
+   * shrink so a whole page stays visible within `innerHeight - fitViewportOffset`.
+   */
+  fitViewportOffset?: number;
+  maxPageWidth?: number;
   onPageChange?: (page: number, totalPages: number) => void;
 };
 
@@ -28,6 +36,9 @@ export default function PdfPreview({
   openHref,
   ariaLabel,
   className,
+  showHeader,
+  fitViewportOffset,
+  maxPageWidth,
   onPageChange,
 }: PdfPreviewProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -58,6 +69,9 @@ export default function PdfPreview({
     <div
       ref={rootRef}
       className={["mq-pdf-preview", className].filter(Boolean).join(" ")}
+      style={typeof fitViewportOffset === "number"
+        ? { "--mq-pdf-fit-height": `max(240px, calc(100dvh - ${fitViewportOffset}px))` } as CSSProperties
+        : undefined}
       aria-label={ariaLabel ?? (title ? `${title} PDF preview` : "PDF preview")}
     >
       {isVisible ? (
@@ -66,6 +80,9 @@ export default function PdfPreview({
           title={title}
           pageCountHint={pageCountHint}
           openHref={openHref}
+          showHeader={showHeader}
+          fitViewportOffset={fitViewportOffset}
+          maxPageWidth={maxPageWidth}
           onPageChange={onPageChange}
         />
       ) : (

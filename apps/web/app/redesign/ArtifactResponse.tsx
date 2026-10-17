@@ -3,9 +3,11 @@
 import {
   BarChart3,
   Coins,
+  ExternalLink,
   FileText,
   GalleryHorizontal,
   LoaderCircle,
+  Maximize2,
   Pencil,
   Plus,
   Save,
@@ -13,7 +15,8 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import PdfLightbox from "../../components/pdf/PdfLightbox";
 import PdfPreview from "../../components/pdf/PdfPreview";
 import type {
   ArtifactDetailData,
@@ -22,12 +25,9 @@ import type {
   UpdateArtifactRequest,
 } from "./artifactTypes";
 import { POLL_DURATION_DAYS } from "./artifactTypes";
+import { artifactTypeLabels } from "./artifactPresentation";
 
-export const artifactTypeLabels: Record<ArtifactType, string> = {
-  POST: "Post",
-  POLL: "Poll",
-  DOCUMENT: "Carousel",
-};
+export { artifactTypeLabels };
 
 const artifactTypeIcons: Record<ArtifactType, LucideIcon> = {
   POST: FileText,
@@ -72,21 +72,22 @@ function PollResponse({ artifact }: { artifact: ArtifactDetailData }) {
   );
 }
 
+// The topbar, the card header and its slide controls stay on screen around a
+// slide, plus the refine box below; the rest is left for the slide itself.
+const STUDIO_SLIDE_VIEWPORT_OFFSET = 330;
+
 function DocumentResponse({ artifact }: { artifact: ArtifactDetailData }) {
   const commentary = artifact.content.commentary?.trim();
   const document = artifact.content.document;
 
   return (
     <div className="mq-studio-document-response">
-      <div className="mq-studio-document-copy">
-        <div className="mq-studio-document-icon"><FileText size={22} /></div>
-        <div>
-          <strong>{artifact.title?.trim() || "Your carousel is ready"}</strong>
+      {commentary || !document?.pdfUrl ? (
+        <div className="mq-studio-document-copy">
           {commentary ? <p>{commentary}</p> : null}
-          <span>{document?.pageCount ?? 0} pages</span>
+          {!document?.pdfUrl ? <span className="mq-studio-pdf-pending">PDF link unavailable</span> : null}
         </div>
-        {!document?.pdfUrl ? <span className="mq-studio-pdf-pending">PDF link unavailable</span> : null}
-      </div>
+      ) : null}
       {document?.pdfUrl ? (
         <PdfPreview
           source={document.pdfUrl}
@@ -95,6 +96,8 @@ function DocumentResponse({ artifact }: { artifact: ArtifactDetailData }) {
           openHref={document.pdfUrl}
           ariaLabel={`${artifact.title?.trim() || "Carousel"} PDF preview`}
           className="mq-pdf-preview-studio"
+          showHeader={false}
+          fitViewportOffset={STUDIO_SLIDE_VIEWPORT_OFFSET}
         />
       ) : null}
     </div>
@@ -337,8 +340,13 @@ export default function ArtifactResponse({
   onSave?: (request: UpdateArtifactRequest) => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const closeLightbox = useCallback(() => setIsLightboxOpen(false), []);
   const TypeIcon = artifactTypeIcons[artifact.type];
   const ResponseBody = responseBodies[artifact.type];
+  const document = artifact.type === "DOCUMENT" ? artifact.content.document : undefined;
+  const pdfUrl = document?.pdfUrl;
+  const title = artifact.title?.trim() || artifactTypeLabels[artifact.type];
 
   function setEditing(next: boolean) {
     setIsEditing(next);
@@ -352,14 +360,52 @@ export default function ArtifactResponse({
           <span className={`mq-artifact-type mq-artifact-type-${artifact.type.toLowerCase()}`}>
             <TypeIcon size={13} /> {artifactTypeLabels[artifact.type]}
           </span>
-          <span className="mq-studio-version">v{artifact.version}</span>
+          {document?.pageCount ? <span className="mq-studio-version">{document.pageCount} pages</span> : null}
         </div>
-        {canEdit && !isEditing ? (
-          <button type="button" className="mq-studio-edit" onClick={() => setEditing(true)}>
-            <Pencil size={14} /> Edit
-          </button>
-        ) : null}
+        <div className="mq-studio-response-actions">
+          {pdfUrl ? (
+            <>
+              <button
+                type="button"
+                className="mq-studio-icon-action"
+                onClick={() => setIsLightboxOpen(true)}
+                aria-label="Expand carousel preview"
+                title="Expand"
+              >
+                <Maximize2 size={14} />
+              </button>
+              <a
+                className="mq-studio-icon-action"
+                href={pdfUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open PDF in a new tab"
+                title="Open PDF"
+              >
+                <ExternalLink size={14} />
+              </a>
+            </>
+          ) : null}
+          {canEdit && !isEditing ? (
+            <button type="button" className="mq-studio-edit" onClick={() => setEditing(true)}>
+              <Pencil size={14} /> Edit
+            </button>
+          ) : null}
+          {canAttach && onAttach ? (
+            <button
+              type="button"
+              className="mq-studio-attach-button"
+              onClick={onAttach}
+              disabled={isAttachDisabled || isAttaching || isEditing || isSaving}
+              aria-busy={isAttaching}
+            >
+              {isAttaching ? <LoaderCircle size={15} /> : null}
+              {isAttaching ? "Creating draft…" : "Attach to post"}
+            </button>
+          ) : null}
+        </div>
       </header>
+      {canAttach && attachError ? <p className="mq-studio-attach-error" role="alert">{attachError}</p> : null}
 
       <div className="mq-studio-response-body">
         {isEditing && canEdit && onSave ? (
@@ -381,27 +427,21 @@ export default function ArtifactResponse({
         )}
       </div>
 
-      <footer className="mq-studio-response-foot">
-        <div className="mq-studio-response-meta">
-          <span>Created by Mark</span>
-          {typeof credits === "number" && credits > 0 ? <span><Coins size={13} /> {credits} credits</span> : null}
-        </div>
-        {canAttach && onAttach ? (
-          <div className="mq-studio-attach-wrap">
-            {attachError ? <p className="mq-studio-attach-error" role="alert">{attachError}</p> : null}
-            <button
-              type="button"
-              className="mq-studio-attach-button"
-              onClick={onAttach}
-              disabled={isAttachDisabled || isAttaching || isEditing || isSaving}
-              aria-busy={isAttaching}
-            >
-              {isAttaching ? <LoaderCircle size={17} /> : null}
-              {isAttaching ? "Creating draft…" : "Attach to post"}
-            </button>
-          </div>
-        ) : null}
-      </footer>
+      {typeof credits === "number" && credits > 0 ? (
+        <footer className="mq-studio-response-foot">
+          <span><Coins size={13} /> {credits} credits</span>
+        </footer>
+      ) : null}
+
+      {isLightboxOpen && pdfUrl ? (
+        <PdfLightbox
+          source={pdfUrl}
+          title={title}
+          pageCountHint={document?.pageCount}
+          openHref={pdfUrl}
+          onClose={closeLightbox}
+        />
+      ) : null}
     </article>
   );
 }

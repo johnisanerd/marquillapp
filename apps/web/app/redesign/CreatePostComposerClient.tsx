@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { CalendarClock, FileText, LoaderCircle, Send } from "lucide-react";
+/* eslint-disable @next/next/no-img-element -- LinkedIn avatars are dynamic external URLs. */
+import { CalendarClock, FileText, LoaderCircle, Lock, Pencil, Send } from "lucide-react";
 import { useRouter } from "next/navigation";
 import MarquillSelect from "../../components/ui/MarquillSelect";
 import type {
@@ -24,6 +25,7 @@ import StockImagePicker from "./StockImagePicker";
 import LinkedInConnectButton from "./LinkedInConnectButton";
 import ComposerViewSwitcher, { type ComposerView } from "./ComposerViewSwitcher";
 import usePostMediaWorkflow from "./usePostMediaWorkflow";
+import useMediaQuery from "./useMediaQuery";
 import type { InitialPostComposerData } from "./postComposer";
 import {
   getLinkedInAccountAccess,
@@ -32,6 +34,9 @@ import {
 } from "./linkedinAccess";
 
 type PendingAction = "attach" | "publish" | "schedule" | "unschedule" | null;
+
+// Keep in sync with the two-column breakpoint in globals.css.
+const SIDE_BY_SIDE_QUERY = "(min-width: 1100px)";
 type StockProvider = "pexels" | "unsplash";
 
 export default function CreatePostComposerClient({
@@ -108,8 +113,14 @@ export default function CreatePostComposerClient({
   const isPublished = postStatus === "PUBLISHED";
   const isScheduled = postStatus === "SCHEDULED";
   const compositionLocked = isScheduled || isPublished;
+  // Wide screens show the composition and its preview side by side; narrower
+  // ones switch between them with tabs.
+  const isSideBySide = useMediaQuery(SIDE_BY_SIDE_QUERY);
+  const usesTabs = Boolean(artifact) && !isSideBySide;
   // The preview tab has nothing to show until an artifact is attached.
   const activeView = artifact ? composerView : "compose";
+  const scheduleLabel = new Date(scheduleValue).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const accountAvatar = account?.avatarUrl ?? account?.profile?.picture;
   const canSubmit = Boolean(postId && artifact && accountAccess?.isUsable && !mediaBlocked && !isBusy && !isPublished);
 
   function saveTitle(): Promise<boolean> {
@@ -270,10 +281,21 @@ export default function CreatePostComposerClient({
     }
   }
 
+  const isSubmitting = pendingAction === "publish" || pendingAction === "schedule";
+  // One action, following the timing chosen in "When should this publish?".
   const topbarActions = !isPublished ? (
     <div className="mq-create-post-top-actions">
-      <button type="button" className="mq-secondary-button mq-create-post-schedule-top" disabled={!postId || !accountAccess?.isUsable || isBusy} onClick={() => setScheduleMode(true)} title={!accountAccess?.isUsable ? LINKEDIN_ACCESS_EXPIRED_MESSAGE : undefined}><CalendarClock size={16} /> Schedule</button>
-      <button type="button" className="mq-primary-button" disabled={!canSubmit} onClick={() => void publishNow()}>{pendingAction === "publish" ? <LoaderCircle className="mq-spin" size={16} /> : <Send size={16} />}<span>Publish now</span></button>
+      <button
+        type="button"
+        className="mq-primary-button"
+        disabled={!canSubmit}
+        onClick={() => void (scheduleMode ? confirmSchedule() : publishNow())}
+        title={account && !accountAccess?.isUsable ? LINKEDIN_ACCESS_EXPIRED_MESSAGE : undefined}
+      >
+        {isSubmitting ? <LoaderCircle className="mq-spin" size={16} /> : scheduleMode ? <CalendarClock size={16} /> : <Send size={16} />}
+        <span className="mq-create-post-action-full">{scheduleMode ? `Schedule · ${scheduleLabel}` : "Publish now"}</span>
+        <span className="mq-create-post-action-short" aria-hidden="true">{scheduleMode ? "Schedule" : "Publish"}</span>
+      </button>
     </div>
   ) : null;
 
@@ -303,7 +325,9 @@ export default function CreatePostComposerClient({
               }
             }}
           />
-          {isTitleSaving ? <LoaderCircle className="mq-spin" size={13} aria-label="Saving title" /> : null}
+          {isTitleSaving
+            ? <LoaderCircle className="mq-spin" size={13} aria-label="Saving title" />
+            : initialLoadError || compositionLocked ? null : <Pencil className="mq-post-title-hint" size={13} aria-hidden="true" />}
         </label>
       )}
       topbar={{ back: { href: "/posts", label: "Back to posts" }, subtitle: postStatus ? `Post · ${postStatus.toLowerCase()}` : artifact ? "1 artifact attached" : "Attach an artifact to continue", minimal: true }}
@@ -321,77 +345,88 @@ export default function CreatePostComposerClient({
           </div>
         ) : null}
 
-        {initialLoadError ? null : <div className={`mq-create-post-grid mq-view-${activeView}`}>
+        {initialLoadError ? null : <div className={`mq-create-post-grid mq-view-${activeView}${artifact ? " has-preview" : ""}`}>
           <div className="mq-create-post-intro">
-            <div><h1>Compose post</h1><span className="mq-mono">artifact → media → publish</span></div>
-            <label className="mq-create-account-field">
-              <span>Publishing as</span>
-              <MarquillSelect
-                value={selectedAccountId}
-                onChange={setSelectedAccountId}
-                disabled={Boolean(postId)}
-                placeholder="Choose account"
-                ariaLabel="Connected LinkedIn account"
-                options={accountOptions.map((item) => {
-                  const access = getLinkedInAccountAccess(item, accountOptions);
-                  return {
-                    value: item.id,
-                    label: `${item.displayName ?? "LinkedIn account"}${access.isUsable ? "" : ` — ${access.statusLabel}`}`,
-                    disabled: !access.isUsable,
-                  };
-                })}
-              />
-              {postId ? <small>Account locked to this post</small> : null}
-            </label>
+            <h1>Compose post</h1>
+            {postId && account ? (
+              <div className="mq-create-account-locked" title="The account is locked to this post">
+                <span>Publishing as</span>
+                {accountAvatar ? <img src={accountAvatar} alt="" width={24} height={24} /> : null}
+                <strong>{account.displayName ?? "LinkedIn account"}</strong>
+                <Lock size={12} aria-label="Locked to this post" />
+              </div>
+            ) : (
+              <label className="mq-create-account-field">
+                <span>Publishing as</span>
+                <MarquillSelect
+                  value={selectedAccountId}
+                  onChange={setSelectedAccountId}
+                  disabled={Boolean(postId)}
+                  placeholder="Choose account"
+                  ariaLabel="Connected LinkedIn account"
+                  options={accountOptions.map((item) => {
+                    const access = getLinkedInAccountAccess(item, accountOptions);
+                    return {
+                      value: item.id,
+                      label: `${item.displayName ?? "LinkedIn account"}${access.isUsable ? "" : ` — ${access.statusLabel}`}`,
+                      disabled: !access.isUsable,
+                    };
+                  })}
+                />
+              </label>
+            )}
           </div>
 
-          {isScheduled ? (
-            <div className="mq-alert mq-composer-lock-notice">
-              <span>This post is scheduled. Unschedule it before changing the artifact or media.</span>
-              <button type="button" className="mq-secondary-button mq-button-small" disabled={isBusy} onClick={() => void unschedulePost()}>{pendingAction === "unschedule" ? "Unscheduling…" : "Unschedule to edit"}</button>
-            </div>
-          ) : null}
-          {isPublished ? <div className="mq-alert mq-composer-lock-notice"><span>This post has been published and is available here as a read-only composition.</span></div> : null}
+          {usesTabs ? <ComposerViewSwitcher value={composerView} onChange={setComposerView} /> : null}
 
-          {artifact ? <ComposerViewSwitcher value={composerView} onChange={setComposerView} /> : null}
+          <div className="mq-create-post-main">
+            {isScheduled ? (
+              <div className="mq-alert mq-composer-lock-notice">
+                <span>This post is scheduled. Unschedule it before changing the artifact or media.</span>
+                <button type="button" className="mq-secondary-button mq-button-small" disabled={isBusy} onClick={() => void unschedulePost()}>{pendingAction === "unschedule" ? "Unscheduling…" : "Unschedule to edit"}</button>
+              </div>
+            ) : null}
+            {isPublished ? <div className="mq-alert mq-composer-lock-notice"><span>This post has been published and is available here as a read-only composition.</span></div> : null}
 
-          <section
-            id="mq-composer-compose-panel"
-            className="mq-create-post-compose"
-            role={artifact ? "tabpanel" : undefined}
-            aria-labelledby={artifact ? "mq-composer-compose-tab" : undefined}
-          >
-            {!artifact && !connectedAccounts.length ? (
-              <div className="mq-card mq-create-post-empty"><FileText size={24} /><h2>Connect LinkedIn to publish</h2><p>A connected personal account or organization page is required before attaching an artifact.</p><LinkedInConnectButton className="mq-primary-button">Connect LinkedIn</LinkedInConnectButton></div>
-            ) : !artifact && !hasUsableAccount ? (
-              <div className="mq-card mq-create-post-empty"><FileText size={24} /><h2>Reconnect LinkedIn to continue</h2><p>Your connected LinkedIn access has expired. Reconnect before creating a post.</p><LinkedInConnectButton className="mq-primary-button">Reconnect LinkedIn</LinkedInConnectButton></div>
-            ) : !artifact ? (
-              <button type="button" className="mq-card mq-attach-artifact-empty" onClick={() => setIsArtifactPickerOpen(true)}>
-                <span><FileText size={22} /></span><strong>Attach an artifact</strong><small>Choose one READY post, poll, or document.</small>
-              </button>
-            ) : (
-              <AttachedArtifactComposition
-                artifact={artifact}
-                busy={isBusy || compositionLocked}
-                canSwap={!compositionLocked}
-                onSwap={() => setIsArtifactPickerOpen(true)}
-                mediaControls={artifact.type === "POST" ? <PostMediaControls error={mediaError} isBusy={isBusy} phase={isPreparingStock ? "preparing" : workflowPhase} readOnly={compositionLocked} media={media} previewUrls={previewUrls} uploadProgress={uploadProgress} onChooseStock={setStockProvider} onRefresh={() => void refreshMedia()} onRemove={(item) => void removeMedia(item)} onUpload={uploadFiles} /> : undefined}
-              />
-            )}
-          </section>
+            <section
+              id="mq-composer-compose-panel"
+              className="mq-create-post-compose"
+              role={usesTabs ? "tabpanel" : undefined}
+              aria-labelledby={usesTabs ? "mq-composer-compose-tab" : undefined}
+            >
+              {!artifact && !connectedAccounts.length ? (
+                <div className="mq-card mq-create-post-empty"><FileText size={24} /><h2>Connect LinkedIn to publish</h2><p>A connected personal account or organization page is required before attaching an artifact.</p><LinkedInConnectButton className="mq-primary-button">Connect LinkedIn</LinkedInConnectButton></div>
+              ) : !artifact && !hasUsableAccount ? (
+                <div className="mq-card mq-create-post-empty"><FileText size={24} /><h2>Reconnect LinkedIn to continue</h2><p>Your connected LinkedIn access has expired. Reconnect before creating a post.</p><LinkedInConnectButton className="mq-primary-button">Reconnect LinkedIn</LinkedInConnectButton></div>
+              ) : !artifact ? (
+                <button type="button" className="mq-card mq-attach-artifact-empty" onClick={() => setIsArtifactPickerOpen(true)}>
+                  <span><FileText size={22} /></span><strong>Attach an artifact</strong><small>Choose one READY post, poll, or carousel.</small>
+                </button>
+              ) : (
+                <AttachedArtifactComposition
+                  artifact={artifact}
+                  busy={isBusy || compositionLocked}
+                  canSwap={!compositionLocked}
+                  onSwap={() => setIsArtifactPickerOpen(true)}
+                  mediaControls={artifact.type === "POST" ? <PostMediaControls error={mediaError} isBusy={isBusy} phase={isPreparingStock ? "preparing" : workflowPhase} readOnly={compositionLocked} media={media} previewUrls={previewUrls} uploadProgress={uploadProgress} onChooseStock={setStockProvider} onRefresh={() => void refreshMedia()} onRemove={(item) => void removeMedia(item)} onUpload={uploadFiles} /> : undefined}
+                />
+              )}
+
+              {postId && !isPublished && accountAccess?.isUsable ? <PostSchedulingControls isBusy={isBusy} scheduleMode={scheduleMode} scheduleValue={scheduleValue} onChange={setScheduleValue} onModeChange={setScheduleMode} /> : null}
+            </section>
+          </div>
 
           {artifact ? (
             <aside
               id="mq-composer-preview-panel"
               className="mq-create-post-preview"
-              role="tabpanel"
-              aria-labelledby="mq-composer-preview-tab"
+              role={usesTabs ? "tabpanel" : undefined}
+              aria-labelledby={usesTabs ? "mq-composer-preview-tab" : undefined}
+              aria-label={usesTabs ? undefined : "LinkedIn preview"}
             >
               <PostCompositionPreview key={`${artifact.id}:${artifact.version}`} user={user} account={account} artifact={artifact} media={media} previewUrls={previewUrls} />
             </aside>
           ) : null}
-
-          {postId && !isPublished && accountAccess?.isUsable ? <PostSchedulingControls canSubmit={canSubmit} isBusy={isBusy} isScheduling={pendingAction === "schedule"} scheduleMode={scheduleMode} scheduleValue={scheduleValue} onChange={setScheduleValue} onConfirm={() => void confirmSchedule()} onModeChange={setScheduleMode} /> : null}
         </div>}
 
         <span className="mq-create-post-status" aria-live="polite">{statusText}</span>

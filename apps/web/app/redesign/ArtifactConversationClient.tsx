@@ -4,16 +4,18 @@ import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import {
+  ChevronDown,
   LoaderCircle,
   RefreshCw,
   Sparkles,
-  Trash2,
   XCircle,
 } from "lucide-react";
 import MarquillMark from "../../components/brand/MarquillMark";
@@ -33,6 +35,8 @@ import ArtifactResponse, {
   artifactTypeLabels,
   isAttachableArtifact,
 } from "./ArtifactResponse";
+import { artifactTypeIcons } from "./artifactPresentation";
+import StudioOverflowMenu from "./StudioOverflowMenu";
 import ArtifactRunProgress from "./ArtifactRunProgress";
 import ConnectedAccountPicker, {
   resolveAttachAccountChoice,
@@ -59,6 +63,36 @@ type ConversationEntry =
   | { id: string; role: "user"; text: string }
   | { id: string; role: "assistant"; artifact: ArtifactDetailData; credits?: number };
 
+const REFINE_TEXTAREA_MAX_HEIGHT = 168;
+
+function prefersReducedMotion() {
+  return typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/** An earlier version, folded to one row so the thread stays short and its PDF is not loaded. */
+function CollapsedVersion({
+  artifact,
+  onExpand,
+}: {
+  artifact: ArtifactDetailData;
+  onExpand: () => void;
+}) {
+  const TypeIcon = artifactTypeIcons[artifact.type];
+  const summary = artifact.content.commentary?.trim() || artifact.content.poll?.question;
+
+  return (
+    <button type="button" className="mq-studio-collapsed-version" onClick={onExpand} aria-expanded={false}>
+      <span className="mq-studio-collapsed-icon"><TypeIcon size={15} /></span>
+      <span className="mq-studio-collapsed-copy">
+        <strong>{artifact.title?.trim() || artifactTypeLabels[artifact.type]}</strong>
+        {summary ? <small>{summary}</small> : null}
+      </span>
+      <span className="mq-studio-collapsed-action">Show <ChevronDown size={14} /></span>
+    </button>
+  );
+}
+
 export default function ArtifactConversationClient({
   user,
   connectedAccounts,
@@ -78,7 +112,7 @@ export default function ArtifactConversationClient({
   const initialRunIdRef = useRef(initialRunId);
   const [entries, setEntries] = useState<ConversationEntry[]>([]);
   const [artifactType, setArtifactType] = useState<ArtifactType>();
-  const [artifactTitle, setArtifactTitle] = useState("Artifact Studio");
+  const [artifactTitle, setArtifactTitle] = useState<string>();
   const [activeRunId, setActiveRunId] = useState(initialRunId);
   const [isHydrated, setIsHydrated] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -99,6 +133,11 @@ export default function ArtifactConversationClient({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [attachTarget, setAttachTarget] = useState<ArtifactDetailData | null>(null);
   const [isAccountPickerOpen, setIsAccountPickerOpen] = useState(false);
+  // Earlier versions the user unfolded; every other non-current version stays collapsed.
+  const [expandedVersions, setExpandedVersions] = useState<ReadonlySet<number>>(() => new Set());
+  const entryRefs = useRef(new Map<string, HTMLElement>());
+  const seenEntryIds = useRef<Set<string> | null>(null);
+  const feedbackRef = useRef<HTMLTextAreaElement>(null);
   const {
     clearError: clearAttachError,
     createDraft,
@@ -253,6 +292,31 @@ export default function ArtifactConversationClient({
     () => entries.filter((entry): entry is Extract<ConversationEntry, { role: "assistant" }> => entry.role === "assistant"),
     [entries],
   );
+  // Bring each new message into view: the user's reply when it is sent, and the
+  // top of a new version when it arrives (a carousel is taller than the screen,
+  // so scrolling to the bottom would land past its first slide).
+  useEffect(() => {
+    if (!isHydrated) return;
+    const ids = entries.map((entry) => entry.id);
+    const seen = seenEntryIds.current;
+    seenEntryIds.current = new Set(ids);
+
+    let target: string | undefined;
+    if (seen === null) {
+      // On load, follow a refinement that is still building; otherwise stay at the top.
+      const last = entries.at(-1);
+      if (last?.role === "user" && entries.some((entry) => entry.role === "assistant")) target = last.id;
+    } else {
+      target = ids.findLast((id) => !seen.has(id));
+    }
+    if (!target) return;
+
+    const node = entryRefs.current.get(target);
+    if (!node) return;
+    const behavior: ScrollBehavior = seen === null || prefersReducedMotion() ? "auto" : "smooth";
+    requestAnimationFrame(() => node.scrollIntoView({ behavior, block: "start" }));
+  }, [entries, isHydrated]);
+
   const canRefine = responses.length > 0
     && !activeRunId
     && !isStartingRefine
@@ -327,6 +391,26 @@ export default function ArtifactConversationClient({
     ?.artifact.content.document?.designSystemName;
   const needsDesignChoice = designUnavailableMessage !== null && !refineDesignSystemId;
 
+  useLayoutEffect(() => {
+    const textarea = feedbackRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, REFINE_TEXTAREA_MAX_HEIGHT)}px`;
+  }, [feedback]);
+
+  function handleFeedbackKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
+
+  function registerEntry(id: string) {
+    return (node: HTMLElement | null) => {
+      if (node) entryRefs.current.set(id, node);
+      else entryRefs.current.delete(id);
+    };
+  }
+
   async function startRefinement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedFeedback = feedback.trim();
@@ -369,24 +453,20 @@ export default function ArtifactConversationClient({
       selectedAccountId={primaryAccountId}
       subscription={subscription}
       active="artifacts"
-      title={artifactTitle}
+      title={artifactTitle ?? (artifactType ? `New ${artifactTypeLabels[artifactType].toLowerCase()}` : "New artifact")}
       topbar={{
         back: { href: "/artifacts", label: "Back to artifacts" },
         subtitle: artifactType ? `${artifactTypeLabels[artifactType]} · Created with Mark` : "Creating with Mark",
         credits: { refreshKey: activeRunId },
       }}
       topbarExtra={isHydrated ? (
-        <button
-          type="button"
-          className="mq-artifact-delete-topbar"
-          onClick={() => {
+        <StudioOverflowMenu
+          onDelete={() => {
             setDeleteError(null);
             setIsDeleteOpen(true);
           }}
           disabled={isDeleting || isEditing || savingVersion !== null || isStartingRefine || isAttaching}
-        >
-          <Trash2 size={15} /> Delete
-        </button>
+        />
       ) : null}
       showAccountSelector={false}
     >
@@ -412,12 +492,33 @@ export default function ArtifactConversationClient({
           ) : null}
 
           {entries.map((entry) => entry.role === "user" ? (
-            <div className="mq-studio-user-message" key={entry.id}>{entry.text}</div>
+            <div className="mq-studio-user-message" key={entry.id} ref={registerEntry(entry.id)}>{entry.text}</div>
           ) : (
-            <div className="mq-studio-assistant-message" key={entry.id}>
+            <div className="mq-studio-assistant-message" key={entry.id} ref={registerEntry(entry.id)}>
               <div className="mq-studio-mark"><MarquillMark size={30} theme="auto" title="Mark" /></div>
               <div className="mq-studio-assistant-content">
-                <div className="mq-studio-assistant-meta">Mark created version {entry.artifact.version}</div>
+                <div className="mq-studio-assistant-meta">
+                  <span>Mark created version {entry.artifact.version}</span>
+                  {entry.artifact.version !== entry.artifact.currentVersion && expandedVersions.has(entry.artifact.version) ? (
+                    <button
+                      type="button"
+                      aria-expanded
+                      onClick={() => setExpandedVersions((current) => {
+                        const next = new Set(current);
+                        next.delete(entry.artifact.version);
+                        return next;
+                      })}
+                    >
+                      Hide
+                    </button>
+                  ) : null}
+                </div>
+                {entry.artifact.version !== entry.artifact.currentVersion && !expandedVersions.has(entry.artifact.version) ? (
+                  <CollapsedVersion
+                    artifact={entry.artifact}
+                    onExpand={() => setExpandedVersions((current) => new Set(current).add(entry.artifact.version))}
+                  />
+                ) : (
                 <ArtifactResponse
                   key={`${entry.id}-${editResetKey}`}
                   artifact={entry.artifact}
@@ -455,51 +556,60 @@ export default function ArtifactConversationClient({
                   onAttach={() => requestAttach(entry.artifact)}
                   onSave={(request) => saveArtifact(entry.artifact.version, request)}
                 />
+                )}
               </div>
             </div>
           ))}
 
+          {run ? (
+            <div className="mq-studio-assistant-message mq-studio-run-message">
+              <div className="mq-studio-mark"><MarquillMark size={30} theme="auto" title="Mark" /></div>
+              <div className="mq-studio-assistant-content">
+                <ArtifactRunProgress
+                  run={run}
+                  artifactType={artifactType}
+                  artifactId={artifactId}
+                  onRetryLoad={retryCompletedVersion}
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {responses.length || run ? (
           <div className="mq-studio-refine-wrap">
-            {run ? (
-              <ArtifactRunProgress
-                run={run}
-                artifactType={artifactType}
-                artifactId={artifactId}
-                onRetryLoad={retryCompletedVersion}
-              />
-            ) : null}
-            {isDocument && responses.length ? (
-              <RefineDesignControl
-                state={designSystems.state}
-                systems={designSystems.systems}
-                value={refineDesignSystemId}
-                onChange={setRefineDesignSystemId}
-                onReload={() => void designSystems.reload()}
-                currentDesignName={currentDesignName}
-                unavailableMessage={designUnavailableMessage}
-                disabled={!canRefine}
-              />
-            ) : null}
             <form className="mq-studio-refine" onSubmit={startRefinement}>
               <label htmlFor="artifact-feedback" className="sr-only">Reply to refine the artifact</label>
               <textarea
+                ref={feedbackRef}
                 id="artifact-feedback"
                 value={feedback}
                 onChange={(event) => {
                   setFeedback(event.target.value);
                   if (refineError) setRefineError(null);
                 }}
+                onKeyDown={handleFeedbackKeyDown}
                 placeholder={run ? "Mark is building your artifact…" : "Tell Mark what to change…"}
                 maxLength={2000}
-                rows={2}
+                rows={1}
                 disabled={!canRefine}
               />
               <div className="mq-studio-refine-actions">
+                {isDocument && responses.length ? (
+                  <RefineDesignControl
+                    state={designSystems.state}
+                    systems={designSystems.systems}
+                    value={refineDesignSystemId}
+                    onChange={setRefineDesignSystemId}
+                    onReload={() => void designSystems.reload()}
+                    currentDesignName={currentDesignName}
+                    unavailableMessage={designUnavailableMessage}
+                    disabled={!canRefine}
+                  />
+                ) : null}
                 <button
                   type="submit"
+                  className="mq-studio-refine-submit"
                   disabled={!canRefine || !feedback.trim() || needsDesignChoice}
                   title={needsDesignChoice ? "Choose a design to refine with" : undefined}
                   aria-label="Refine artifact"
@@ -516,7 +626,7 @@ export default function ArtifactConversationClient({
       <ArtifactDeleteConfirmModal
         isOpen={isDeleteOpen}
         isDeleting={isDeleting}
-        artifactTitle={artifactTitle === "Artifact Studio" ? undefined : artifactTitle}
+        artifactTitle={artifactTitle}
         error={deleteError}
         onClose={() => {
           if (isDeleting) return;

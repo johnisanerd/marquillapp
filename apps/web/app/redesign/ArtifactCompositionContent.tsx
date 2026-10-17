@@ -3,8 +3,9 @@
 import { useState, type ReactNode } from "react";
 import { FileText } from "lucide-react";
 import PdfPreview from "../../components/pdf/PdfPreview";
+import PdfThumbnail from "../../components/pdf/PdfThumbnail";
 import type { ArtifactDetailData } from "./artifactTypes";
-import { artifactTypeIcons } from "./artifactPresentation";
+import { artifactTypeIcons, artifactTypeLabels } from "./artifactPresentation";
 import { truncatePostPreview } from "./postPreviewCutoff";
 
 export function artifactSummaryCopy(artifact: ArtifactDetailData) {
@@ -36,6 +37,10 @@ function ExpandablePostCommentary({ commentary }: { commentary: string }) {
   );
 }
 
+// The topbar, the LinkedIn author row, a few lines of commentary and the slide
+// controls sit around a slide in the composer preview.
+const PREVIEW_SLIDE_VIEWPORT_OFFSET = 380;
+
 export function ArtifactContentView({ artifact }: { artifact: ArtifactDetailData }) {
   const commentary = artifact.content.commentary?.trim();
   const poll = artifact.type === "POLL" ? artifact.content.poll : undefined;
@@ -62,6 +67,7 @@ export function ArtifactContentView({ artifact }: { artifact: ArtifactDetailData
             openHref={document.pdfUrl}
             ariaLabel={`${artifact.title?.trim() || "LinkedIn document"} carousel preview`}
             className="mq-pdf-preview-composition"
+            fitViewportOffset={PREVIEW_SLIDE_VIEWPORT_OFFSET}
           />
         ) : (
           <div className="mq-preview-document">
@@ -92,12 +98,25 @@ export default function AttachedArtifactComposition({
   mediaControls?: ReactNode;
 }) {
   const ArtifactIcon = artifactTypeIcons[artifact.type];
+  const title = artifact.title?.trim() || "Untitled artifact";
+  const document = artifact.type === "DOCUMENT" ? artifact.content.document : undefined;
 
   return (
     <>
       <article className="mq-card mq-attached-artifact">
         <header><span className="mq-mono">_ attached artifact</span>{canSwap ? <button type="button" onClick={onSwap} disabled={busy}>Swap</button> : null}</header>
-        <div><span className={`mq-artifact-pick-icon is-${artifact.type.toLowerCase()}`}><ArtifactIcon size={18} /></span><span><strong>{artifact.title?.trim() || "Untitled artifact"}</strong><small><b>{artifact.type}</b> · v{artifact.version}</small><p>{artifactSummaryCopy(artifact)}</p></span></div>
+        <div>
+          {document?.pdfUrl ? (
+            <PdfThumbnail source={document.pdfUrl} label={`${title} first page`} />
+          ) : (
+            <span className={`mq-artifact-pick-icon is-${artifact.type.toLowerCase()}`}><ArtifactIcon size={18} /></span>
+          )}
+          <span>
+            <strong>{title}</strong>
+            <small><b>{artifactTypeLabels[artifact.type]}</b> · v{artifact.version}{document ? ` · ${document.pageCount} pages` : ""}</small>
+            <p>{artifactSummaryCopy(artifact)}</p>
+          </span>
+        </div>
       </article>
       {mediaControls ? <article className="mq-card mq-post-media-card">{mediaControls}</article> : null}
     </>
