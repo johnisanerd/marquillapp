@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { formatMonth, liveBoard, nextBoard, publishedChangelog } from '@marquill/product';
 
 export function Icon({ paths, size = 20 }: { paths: string[]; size?: number }) {
   return (
@@ -90,36 +91,20 @@ export function MarkTile({ size = 30 }: { size?: number }) {
 }
 
 /* ------------------------------------------------------------
-   Status board: what is in the app today, and what is not yet.
+   Status board and changelog. Both come from the product ledger
+   (packages/product); edit features there, not here.
    ------------------------------------------------------------ */
-export type BoardItem = { title: string; body: string };
-
-export const liveNow: BoardItem[] = [
-  { title: 'Posts', body: 'LinkedIn text posts, drafted from your prompt.' },
-  { title: 'Polls', body: 'A question and two to four options.' },
-  { title: 'Documents', body: 'One-pagers and multi-slide carousels, exported as PDF.' },
-  { title: 'Six Design Systems', body: 'Afterglow, Broadside, Colophon, Margin, Overprint, Schematic.' },
-  { title: 'Research', body: 'Web search plus the top YouTube videos and Reddit threads on your topic.' },
-  { title: 'Scheduling', body: 'Type “next Tuesday 9am”, then check the calendar.' },
-  { title: 'Company pages', body: 'Publish to your profile or to a company page you admin.' },
-];
-
-export const shippingNext: BoardItem[] = [
-  { title: 'Analytics', body: 'Post performance inside Marquill. It stays switched off until the numbers are right.' },
-];
-
-/* ------------------------------------------------------------
-   Changelog: recent shipments, newest first.
-   ------------------------------------------------------------ */
+export type { BoardItem } from '@marquill/product';
 export type Shipment = { date: string; title: string; body: string };
 
-export const changelog: Shipment[] = [
-  { date: 'Oct 2026', title: 'Swatch menu with hover preview', body: 'Hover over a Design System to preview it before you pick.' },
-  { date: 'Oct 2026', title: 'Refine a document from its source', body: 'Mark edits the document he already made, so the parts you liked stay put.' },
-  { date: 'Oct 2026', title: 'Design Systems for documents', body: 'Six designed systems for one-pagers and carousels, chosen per document.' },
-  { date: 'Jul 2026', title: 'Live progress', body: 'Watch each step as Mark researches, writes, and renders.' },
-  { date: 'Apr 2026', title: 'Company pages', body: 'Connect a LinkedIn company page and publish to it on a schedule.' },
-];
+export const liveNow = liveBoard();
+export const shippingNext = nextBoard();
+
+export const changelog: Shipment[] = publishedChangelog(5).map((entry) => ({
+  date: formatMonth(entry.date),
+  title: entry.title,
+  body: entry.body,
+}));
 
 /* ------------------------------------------------------------
    Design Systems. Names and descriptions match the app's six
@@ -164,7 +149,7 @@ export const plans: Plan[] = [
 export type Faq = { q: string; a: string };
 
 export const faqs: Faq[] = [
-  { q: 'What does public beta mean for me?', a: 'Everything on the Live now board works in the app today. Analytics is the one feature still switched off. You will see new features land and, now and then, a rough edge. When you hit one, tell us.' },
+  { q: 'What does public beta mean for me?', a: 'Everything on the Live now board works in the app today. Features under Shipping next are not in the app yet. You will see new features land and, now and then, a rough edge. When you hit one, tell us.' },
   { q: 'How do I report a problem or ask for a feature?', a: 'Email hello@marquill.com. Tell us what you asked Mark for and what came back.' },
   { q: 'Can I change plans later?', a: 'Yes. Upgrades and downgrades take effect immediately, and we prorate the charge.' },
   { q: 'Do you offer refunds?', a: 'First-time subscribers get a full refund within 30 days of the charge. Email hello@marquill.com and we will process it.' },

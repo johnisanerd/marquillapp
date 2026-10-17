@@ -21,6 +21,7 @@ There are no tests. Before committing, run `bun run typecheck` and `bun run buil
 
 - **Static export only.** Nothing may need a server at request time: no route handlers, no server actions, no `cookies()` or `headers()`, no dynamic routes without `generateStaticParams`. Images are unoptimized (`images.unoptimized: true`).
 - **Homepage (`app/page.tsx`)** is assembled from section components in `components/landing/`.
+- **Status board and changelog** (`liveNow`, `shippingNext`, `changelog` in `data.tsx`) are derived from the product ledger in `packages/product`. Edit features there; see "Product ledger" in the root AGENTS.md.
 - **`components/landing/data.tsx`** is the single source for plans, FAQs, and feature steps. Both the homepage pricing section and `app/pricing/page.tsx` read from it, so don't duplicate that content in a page. Plan limits must match the api's tier seeds (`apps/api/src/scripts/tier-seeds.ts`).
 - **Blog:** posts are markdown strings in `lib/posts.ts`, rendered by `app/blog/[slug]/page.tsx` with `react-markdown` and `remark-gfm`.
 - **Links into the product** go through `normalizeAppUrl(process.env.NEXT_PUBLIC_APP_URL)` from `config/urls.ts`. Never hardcode the app URL.
