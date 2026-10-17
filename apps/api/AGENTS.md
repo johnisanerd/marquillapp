@@ -13,7 +13,8 @@ The NestJS backend (`@marquill/api`). Read the root [AGENTS.md](../../AGENTS.md)
 Run these from `apps/api`, or from the root with `bun run --filter @marquill/api <script>`:
 
 ```bash
-docker compose up -d     # from the repo root: MongoDB (27017), Redis (6379), BullMQ dashboard (8080)
+docker compose up -d     # from the repo root: MongoDB (27017), Redis (6379), BullMQ dashboard (8080),
+                         # MinIO (S3 9000, console http://localhost:9001), Browserless (3002)
 
 bun run dev              # HTTP server in watch mode (nest start --watch), port 3500
 bun run build            # nest build -> dist/
@@ -25,6 +26,7 @@ bun run test             # Jest: all *.spec.ts under src/
 bunx jest src/auth/auth.service.spec.ts   # a single file
 bun run test:e2e         # end-to-end (test/jest-e2e.json)
 CHROME_PATH=<chrome> bun run test:render  # real-browser document render (*.render-spec.ts); not in `check`, required before merging renderer or judge changes
+bun run test:render                       # same, against the compose Browserless when BROWSERLESS_URL/BROWSERLESS_TOKEN are set (see .env.example)
 
 bun run lint             # ESLint, report only (large existing backlog)
 bun run lint:fix         # ESLint --fix; only on files you are changing
@@ -122,6 +124,7 @@ Copy `.env.example` and fill in real values. Required keys not in the example:
 - The working directory must be `apps/api`. Mail templates and Design Systems are read from `process.cwd()/assets`.
 - `nest build` must run under Node, not Bun. Under Bun, `require.resolve` honours tsconfig's `baseUrl`, so Nest's path-rewrite hook leaves `src/...` imports bare, and `dist/` then fails with `Cannot find module 'src/...'`.
 - `Dockerfile` builds the image from the repository root: `docker build -f apps/api/Dockerfile -t marquill-api .`. `docker compose --profile app up -d` (run from the root) runs the API and worker against the local infrastructure.
+- Storage is S3-compatible. With `R2_ENDPOINT` set (local MinIO), the client uses path-style URLs and `R2_ACCOUNT_ID` is unused; production leaves it unset and uses Cloudflare R2. Presigned URLs point at the endpoint, so the `--profile app` value `http://minio:9000` is unreachable from the browser. Run the api on the host for flows that touch presigned URLs.
 
 ## Writing Tests
 
