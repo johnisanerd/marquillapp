@@ -9,7 +9,8 @@ import { normalizeAppUrl } from '@/config/urls';
 
 const NAV_LINKS = [
   { label: 'What Mark makes', href: '/#what-mark-makes' },
-  { label: 'One workspace', href: '/#one-workspace' },
+  { label: 'Design Systems', href: '/#design-systems' },
+  { label: 'Status', href: '/#status' },
   { label: 'Pricing', href: '/#pricing' },
 ];
 
@@ -24,9 +25,17 @@ export default function Header({ showThemeToggle = false }: { showThemeToggle?: 
     <header className="sticky top-0 z-50 border-b border-line bg-surface/90 backdrop-blur">
       <nav className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-10" aria-label="Main navigation">
         <div className="flex h-16 items-center justify-between">
-          <Link href="/" className="flex-shrink-0" aria-label="Marquill home">
-            <MarquillLockup size={28} />
-          </Link>
+          <div className="flex items-center gap-2.5">
+            <Link href="/" className="flex-shrink-0" aria-label="Marquill home">
+              <MarquillLockup size={28} />
+            </Link>
+            <Link
+              href="/#status"
+              className="ff-mono hidden rounded-full border border-accent-line bg-accent-soft px-2 py-[2px] text-[10.5px] font-medium uppercase tracking-[0.08em] text-accent-ink transition-colors hover:bg-accent-tint sm:inline-flex"
+            >
+              Beta
+            </Link>
+          </div>
 
           {/* Desktop nav */}
           <div className="hidden items-center gap-7 text-[14px] font-medium text-ink-700 md:flex">
@@ -47,7 +56,7 @@ export default function Header({ showThemeToggle = false }: { showThemeToggle?: 
               href={appUrl}
               className="inline-flex min-h-10 items-center gap-2 rounded-[10px] bg-ink-900 px-[18px] text-[14px] font-semibold tracking-[-0.01em] text-surface transition-opacity hover:opacity-90"
             >
-              Get started for free →
+              Join the beta →
             </a>
           </div>
 
@@ -90,7 +99,7 @@ export default function Header({ showThemeToggle = false }: { showThemeToggle?: 
                 onClick={() => setMobileMenuOpen(false)}
                 className="mt-2 flex min-h-12 items-center justify-center rounded-[10px] bg-ink-900 px-5 text-[15px] font-semibold text-surface"
               >
-                Get started for free →
+                Join the beta →
               </a>
             </div>
           </div>

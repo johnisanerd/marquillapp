@@ -25,7 +25,7 @@ There are no tests. Before committing, run `bun run typecheck` and `bun run buil
 - **Blog:** posts are markdown strings in `lib/posts.ts`, rendered by `app/blog/[slug]/page.tsx` with `react-markdown` and `remark-gfm`.
 - **Links into the product** go through `normalizeAppUrl(process.env.NEXT_PUBLIC_APP_URL)` from `config/urls.ts`. Never hardcode the app URL.
 - **Checkout** (`app/checkout/`) opens Paddle.js on the client.
-- **Theme:** `config/theme.ts` and `components/ThemeScript.tsx` handle light and dark mode. Section anchors (`#what-mark-makes`, `#one-workspace`, `#pricing`) are linked from `Header.tsx` and `Footer.tsx`; keep them in sync when you rename a section.
+- **Theme:** `config/theme.ts` and `components/ThemeScript.tsx` handle light and dark mode. Section anchors (`#status`, `#what-mark-makes`, `#design-systems`, `#one-workspace`, `#changelog`, `#pricing`, `#feedback`) are linked from `Header.tsx` and `Footer.tsx`; keep them in sync when you rename a section.
 
 ## Copy
 

@@ -1,15 +1,15 @@
-import { plans, faqs, Eyebrow } from './data';
+import { plans, faqs, highlightLabel, Eyebrow } from './data';
 
 export default function Pricing({ appUrl }: { appUrl: string }) {
   return (
-    <section id="pricing" className="perf-section border-t border-line bg-surface px-5 py-16 sm:px-6 sm:py-20 lg:px-16 lg:py-[72px]">
+    <section id="pricing" className="perf-section border-t border-line bg-canvas px-5 py-16 sm:px-6 sm:py-20 lg:px-16 lg:py-[72px]">
       <div className="mx-auto max-w-[640px] text-center">
         <Eyebrow>_ pricing</Eyebrow>
         <h2 className="mt-3 text-[28px] font-bold leading-[1.05] tracking-[-0.03em] text-ink-900 sm:text-[36px] lg:text-[40px]">
-          Pay for the volume you post.
+          Free to start. Pay when you post more.
         </h2>
         <p className="mt-3.5 text-[16px] leading-[1.5] text-ink-500 sm:text-[17px]">
-          Credits, connected accounts, and post history. That is all that changes between plans.
+          Plans differ in AI credits, research, connected accounts, scheduled posts, and history. Nothing else.
         </p>
       </div>
 
@@ -18,14 +18,14 @@ export default function Pricing({ appUrl }: { appUrl: string }) {
           <div
             key={plan.name}
             className={`flex flex-col gap-4 rounded-[16px] border bg-surface p-6 shadow-sm ${
-              plan.popular ? 'border-accent ring-1 ring-accent/30' : 'border-line'
+              plan.popular ? 'border-accent shadow-md ring-4 ring-accent-soft' : 'border-line'
             }`}
           >
             <div className="flex min-h-6 items-center justify-between">
               <span className="text-[15px] font-semibold text-ink-900">{plan.name}</span>
               {plan.popular && (
-                <span className="rounded-full bg-accent px-2.5 py-1 text-[11px] font-semibold text-white">
-                  Most popular
+                <span className="rounded-full bg-accent px-2.5 py-1 text-[11px] font-semibold text-on-accent">
+                  {highlightLabel}
                 </span>
               )}
             </div>
@@ -41,7 +41,10 @@ export default function Pricing({ appUrl }: { appUrl: string }) {
 
             <a
               href={appUrl}
-              className="inline-flex min-h-11 items-center justify-center rounded-[10px] bg-ink-900 text-[14px] font-semibold tracking-[-0.01em] text-surface transition-opacity hover:opacity-90"
+              className={`inline-flex min-h-11 items-center justify-center rounded-[10px] text-[14px] font-semibold tracking-[-0.01em] transition-opacity hover:opacity-90 ${
+                plan.popular ? 'bg-accent text-on-accent' : 'bg-ink-900 text-surface'
+              }`}
+              aria-label={`${plan.cta}: ${plan.name} plan`}
             >
               {plan.cta}
             </a>

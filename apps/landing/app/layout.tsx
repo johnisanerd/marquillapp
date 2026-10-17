@@ -49,10 +49,10 @@ export const metadata: Metadata = {
     template: '%s | Marquill',
   },
   description:
-    'Marquill is your AI LinkedIn workspace. Just tell Mark what to post — he writes it, designs the carousel, builds the poll, and ships it in your voice across every account.',
+    'Mark, the LinkedIn agent, is in public beta. He researches your topic, writes posts and polls, designs carousels and one-pagers in six Design Systems, and schedules them to your profile or company page.',
   openGraph: {
     title: 'Marquill — Meet Mark, your LinkedIn agent',
-    description: 'Just tell Mark what to post. He writes it, designs it, and ships it.',
+    description: 'Mark makes your LinkedIn posts, polls, and carousels. Public beta, free plan, no card.',
     type: 'website',
     locale: 'en_US',
     url: 'https://marquill.com',
@@ -69,7 +69,7 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: 'Marquill — Meet Mark, your LinkedIn agent',
-    description: 'Just tell Mark what to post. He writes it, designs it, and ships it.',
+    description: 'Mark makes your LinkedIn posts, polls, and carousels. Public beta, free plan, no card.',
     images: ['/og-image.png'],
   },
   alternates: {
