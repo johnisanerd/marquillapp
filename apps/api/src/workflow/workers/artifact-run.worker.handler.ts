@@ -58,6 +58,8 @@ interface JobAttemptState {
   emitter: RunEventEmitter;
   meter: RunCreditMeter;
   diagnostics: DocumentRunDiagnostics;
+  /** Holds the job attempt's LLM usage, which `fail` writes. */
+  run: RunRecordHandle;
 }
 
 const TEMPORARY_FAILURE_REASON =
@@ -110,6 +112,7 @@ export class ArtifactRunProcessor {
 
     const emitter = new RunEventEmitter(redis, runId, logger);
     const run = runs.handleFor(runId);
+    await this.recordQueueWait(job, run);
     const subject = alertSubject(runId, job.data);
     const meter = new RunCreditMeter(
       creditMeter,
@@ -125,7 +128,7 @@ export class ArtifactRunProcessor {
       jobAttempt: job.attemptsMade + 1,
       prior: await this.readPriorDiagnostics(job, run),
     });
-    this.jobAttempts.set(runId, { emitter, meter, diagnostics });
+    this.jobAttempts.set(runId, { emitter, meter, diagnostics, run });
 
     const emit = (event: EmittedEvent): void => emitter.emit(event);
     const ctx: StepContext = {
@@ -221,7 +224,7 @@ export class ArtifactRunProcessor {
     const storedCode = await handleTerminalFailure(
       {
         artifacts: this.deps.artifacts,
-        run: this.deps.runs.handleFor(runId),
+        run: jobAttempt?.run ?? this.deps.runs.handleFor(runId),
         emitter,
         logger,
       },
@@ -271,6 +274,27 @@ export class ArtifactRunProcessor {
       );
     }
     if (end.outcome !== 'RETRYING') logger.log(finished.completionLine);
+  }
+
+  /**
+   * The first job attempt's wait from enqueue to pickup. A later pickup's
+   * would include the earlier attempts: a retry's their backoff, a stall
+   * restart's the stalled run. `attemptsStarted` counts both, where
+   * `attemptsMade` misses a stall. Best-effort: measuring the queue must
+   * never fail the job.
+   */
+  private async recordQueueWait(
+    job: Job<BuildInput>,
+    run: RunRecordHandle,
+  ): Promise<void> {
+    if (job.attemptsStarted > 1 || job.processedOn === undefined) return;
+    try {
+      await run.recordQueueWait(job.processedOn - job.timestamp);
+    } catch (error: unknown) {
+      this.deps.logger.warn(
+        `Could not record the queue wait of run ${run.runId}: ${describeError(error)}`,
+      );
+    }
   }
 
   /** DOCUMENT: what earlier job attempts recorded. Best-effort. */

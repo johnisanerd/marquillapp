@@ -93,6 +93,8 @@ const makeProcessor = () => {
     readAcceptedCandidate: jest.fn().mockResolvedValue(undefined),
     readDocumentDiagnostics: jest.fn().mockResolvedValue(undefined),
     saveDocumentDiagnostics: jest.fn().mockResolvedValue(undefined),
+    recordQueueWait: jest.fn().mockResolvedValue(undefined),
+    recordModelCall: jest.fn(),
   };
   const runs = { handleFor: jest.fn().mockReturnValue(runHandle) };
   const creditMeter = {
@@ -280,6 +282,62 @@ describe('ArtifactRunProcessor', () => {
       expect(mocks.artifacts.failVersion).not.toHaveBeenCalled();
     });
 
+    it('should record how long the job waited in the queue when its first attempt is picked up', async () => {
+      await processor.process(
+        makeJob({
+          attemptsMade: 0,
+          attemptsStarted: 1,
+          timestamp: 1_000,
+          processedOn: 5_200,
+        }),
+      );
+
+      expect(mocks.runHandle.recordQueueWait).toHaveBeenCalledWith(4_200);
+    });
+
+    it('should not record a queue wait for a retried job attempt, whose wait includes the earlier attempts', async () => {
+      await processor.process(
+        makeJob({
+          attemptsMade: 1,
+          attemptsStarted: 2,
+          timestamp: 1_000,
+          processedOn: 90_000,
+        }),
+      );
+
+      expect(mocks.runHandle.recordQueueWait).not.toHaveBeenCalled();
+    });
+
+    it('should not record a queue wait for a stalled job restarted without a failed attempt', async () => {
+      await processor.process(
+        makeJob({
+          attemptsMade: 0,
+          attemptsStarted: 2,
+          timestamp: 1_000,
+          processedOn: 90_000,
+        }),
+      );
+
+      expect(mocks.runHandle.recordQueueWait).not.toHaveBeenCalled();
+    });
+
+    it('should still run the job when the queue wait cannot be recorded', async () => {
+      mocks.runHandle.recordQueueWait.mockRejectedValue(
+        new Error('mongo down'),
+      );
+
+      await processor.process(
+        makeJob({
+          attemptsMade: 0,
+          attemptsStarted: 1,
+          timestamp: 1_000,
+          processedOn: 5_200,
+        }),
+      );
+
+      expect(mocks.runHandle.complete).toHaveBeenCalledTimes(1);
+    });
+
     it('should emit the honest three-step lifecycle', async () => {
       await processor.process(makeJob());
 
@@ -462,6 +520,26 @@ describe('ArtifactRunProcessor', () => {
         code: 'internal',
         failureReason: 'commentary must not be empty',
       });
+    });
+
+    it("should fail the run through the job attempt's own handle, which holds its LLM usage", async () => {
+      const handles: Array<typeof mocks.runHandle> = [];
+      mocks.runs.handleFor.mockImplementation(() => {
+        const handle = { ...mocks.runHandle, fail: jest.fn() };
+        handles.push(handle);
+        return handle;
+      });
+      const error = new UnrecoverableError('commentary must not be empty');
+      mocks.agent.generate.mockRejectedValue(error);
+      const job = makeJob();
+
+      await expect(processor.process(job)).rejects.toThrow();
+      await processor.onFailed(job, error);
+
+      expect(handles[0].fail).toHaveBeenCalledTimes(1);
+      expect(
+        handles.slice(1).every((handle) => !handle.fail.mock.calls.length),
+      ).toBe(true);
     });
 
     it('should record no document diagnostics and log no completion line for a POST run', async () => {

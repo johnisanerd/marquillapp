@@ -11,6 +11,7 @@ import type {
   BuildInput,
   DocumentCheck,
   DocumentDiagnostics,
+  RunLlmUsage,
 } from '../../workflow/engine/workflow.types';
 import { FailureCode, WorkflowStep } from '../../workflow/workflow.constants';
 
@@ -90,6 +91,15 @@ export class WorkflowRun extends Document {
   // DOCUMENT only: what the run did, written when it ends (spec §11.1).
   @Prop({ type: Object })
   documentDiagnostics?: DocumentDiagnostics;
+
+  // What the final job attempt's model calls cost, written with the run's
+  // completion or failure.
+  @Prop({ type: Object })
+  llmUsage?: RunLlmUsage;
+
+  // The first job attempt's wait between enqueue and worker pickup.
+  @Prop()
+  queueWaitMs?: number;
 
   // Attempt-scoped: reset at the start of each attempt so a whole-job retry
   // cannot double-count. Only the winning attempt's total is ever debited.

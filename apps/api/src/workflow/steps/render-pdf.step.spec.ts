@@ -54,6 +54,7 @@ const makeStep = () => {
     recordRenderAttempt: jest.fn().mockResolvedValue(undefined),
     recordDocumentCheck: jest.fn().mockResolvedValue(undefined),
     saveAcceptedCandidate: jest.fn().mockResolvedValue(undefined),
+    recordModelCall: jest.fn(),
   };
   const deadline = { assertTimeLeft: jest.fn() };
   const meter = { record: jest.fn() };

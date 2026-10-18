@@ -47,7 +47,8 @@ export interface RepairedCandidate {
 
 /**
  * Per-turn, so a repair turn is billed like any other and the SSE stream's
- * credit count climbs while the run is still in flight.
+ * credit count climbs while the run is still in flight. The run record
+ * tallies the turn's tokens and time too.
  */
 export const meteredHooks = (ctx: StepContext): AgentHooks => ({
   onUsage: (usage) => {
@@ -56,6 +57,7 @@ export const meteredHooks = (ctx: StepContext): AgentHooks => ({
       amount: usage.cost,
       detail: { model: usage.model, totalTokens: usage.totalTokens },
     });
+    ctx.run.recordModelCall(usage);
     ctx.diagnostics.recordModelTurn(usage);
   },
 });

@@ -603,6 +603,24 @@ describe('AgentRunnerService', () => {
       expect(repairPrompt).toContain('rejected');
     });
 
+    it('should tag the draft turn and its envelope repair turn with the call they made', async () => {
+      mocks.llmService.complete
+        .mockResolvedValueOnce(completion(draftJson({ html: '' }), 0.03))
+        .mockResolvedValueOnce(completion(draftJson(), 0.04));
+      const onUsage = jest.fn();
+
+      await service.generateDocument(documentInput, { onUsage });
+
+      expect(onUsage).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ call: 'draft', model: GENERATION_MODEL }),
+      );
+      expect(onUsage).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ call: 'envelope' }),
+      );
+    });
+
     it('should log the envelope repair without the model output when the draft is invalid', async () => {
       const warn = jest
         .spyOn(Logger.prototype, 'warn')
@@ -758,6 +776,24 @@ describe('AgentRunnerService', () => {
         service.repairDocument(repairInput, { onUsage }),
       ).resolves.toEqual({ html: HTML, envelopeRepairs: 1 });
       expect(onUsage).toHaveBeenCalledTimes(2);
+    });
+
+    it('should tag the Repair turn and its envelope repair turn with the call they made', async () => {
+      mocks.llmService.complete
+        .mockResolvedValueOnce(completion(repairJson({ html: '' }), 0.03))
+        .mockResolvedValueOnce(completion(repairJson(), 0.04));
+      const onUsage = jest.fn();
+
+      await service.repairDocument(repairInput, { onUsage });
+
+      expect(onUsage).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ call: 'repair' }),
+      );
+      expect(onUsage).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ call: 'envelope' }),
+      );
     });
 
     it('should throw ContentValidationError without a repair turn when none is left', async () => {
@@ -965,6 +1001,37 @@ describe('AgentRunnerService', () => {
 
       // 0.03 + 0.03 (two tool turns) + 0.04 (finalization).
       expect(result.usage.cost).toBeCloseTo(0.1);
+    });
+
+    it('should sum reasoning, cached and cache-write tokens and latency across turns', async () => {
+      const execute = jest.fn().mockResolvedValue({ ok: true });
+      const detailed: Usage = {
+        ...usage(0.03),
+        reasoningTokens: 20,
+        cachedTokens: 60,
+        cacheWriteTokens: 10,
+        latencyMs: 1500,
+      };
+      mocks.llmService.completeWithTools.mockResolvedValue({
+        ...toolTurn([{ id: 'c', name: 'echo', input: { q: 'x' } }]),
+        usage: detailed,
+      });
+      // The finalization turn reports no details: it adds nothing to them.
+      mocks.llmService.complete.mockResolvedValue({
+        text: 'final',
+        usage: { ...usage(0.04), latencyMs: 500 },
+      });
+
+      const result = await service.run(configWith(makeTool(execute), 2));
+
+      expect(result.usage).toMatchObject({
+        promptTokens: 300,
+        completionTokens: 150,
+        reasoningTokens: 40,
+        cachedTokens: 120,
+        cacheWriteTokens: 20,
+        latencyMs: 3500,
+      });
     });
 
     it('should invoke onUsage per LLM turn and onToolCall per tool', async () => {

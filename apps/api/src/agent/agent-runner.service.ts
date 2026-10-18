@@ -28,6 +28,7 @@ import type {
   AgentRunner,
   AgentStep,
   DocumentDraftResult,
+  DocumentModelCall,
   DocumentGenerateInput,
   DocumentRepairInput,
   DocumentRepairResult,
@@ -75,7 +76,19 @@ const addUsage = (into: Usage, turn: Usage): void => {
   into.completionTokens += turn.completionTokens;
   into.totalTokens += turn.totalTokens;
   into.cost += turn.cost;
+  for (const key of OPTIONAL_USAGE_KEYS) {
+    const value = turn[key];
+    if (value !== undefined) into[key] = (into[key] ?? 0) + value;
+  }
 };
+
+// Reported only by some providers and calls, so summed only when present.
+const OPTIONAL_USAGE_KEYS = [
+  'reasoningTokens',
+  'cachedTokens',
+  'cacheWriteTokens',
+  'latencyMs',
+] as const satisfies ReadonlyArray<keyof Usage>;
 
 const hasResults = (
   output: unknown,
@@ -451,7 +464,10 @@ export class AgentRunnerService implements AgentRunner {
         stripNullObjectValues: true,
       });
 
-    const first = await this.complete(messages, hooks, schema, options);
+    const first = await this.complete(messages, hooks, schema, {
+      ...options,
+      call: call === 'draft' ? 'draft' : 'repair',
+    });
     this.assertNotTruncated(call, first.finishReason);
 
     let validationError: unknown;
@@ -485,7 +501,7 @@ export class AgentRunnerService implements AgentRunner {
       ],
       hooks,
       schema,
-      options,
+      { ...options, call: 'envelope' },
     );
     this.assertNotTruncated(call, repaired.finishReason);
 
@@ -595,7 +611,7 @@ export class AgentRunnerService implements AgentRunner {
     messages: LLMMessage[],
     hooks?: AgentHooks,
     responseSchema?: ZodType,
-    options: { maxTokens?: number } = {},
+    options: { maxTokens?: number; call?: DocumentModelCall } = {},
   ): Promise<{ text: string; finishReason?: string }> {
     const { text, usage, finishReason } = await this.llmService.complete(
       LLMProvider.OPENROUTER,
@@ -618,6 +634,7 @@ export class AgentRunnerService implements AgentRunner {
       ...usage,
       model: this.generationModel,
       ...(finishReason ? { finishReason } : {}),
+      ...(options.call ? { call: options.call } : {}),
     });
 
     return { text, ...(finishReason ? { finishReason } : {}) };

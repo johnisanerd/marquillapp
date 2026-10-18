@@ -61,6 +61,14 @@ export interface Usage {
   totalTokens: number;
   /** Real per-call USD cost from the provider. `0` when the provider omits it. */
   cost: number;
+  /** Completion tokens spent reasoning, when the provider reports them. */
+  reasoningTokens?: number;
+  /** Prompt tokens read from the provider's prompt cache. */
+  cachedTokens?: number;
+  /** Prompt tokens written to the provider's prompt cache. */
+  cacheWriteTokens?: number;
+  /** Wall time of the call, request to response. Summed across a run's calls. */
+  latencyMs?: number;
 }
 
 export interface CompletionResult {

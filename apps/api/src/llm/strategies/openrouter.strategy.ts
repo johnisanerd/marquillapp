@@ -31,16 +31,27 @@ const emptyUsage = (): Usage => ({
   cost: 0,
 });
 
-/** OpenRouter reports cost only when the provider supplies it. */
-const toUsage = (usage: ChatUsage | undefined): Usage =>
-  usage
-    ? {
-        promptTokens: usage.promptTokens,
-        completionTokens: usage.completionTokens,
-        totalTokens: usage.totalTokens,
-        cost: usage.cost ?? 0,
-      }
-    : emptyUsage();
+/**
+ * OpenRouter reports cost, and the reasoning and cache token details, only
+ * when the provider supplies them. An absent detail is omitted, not zeroed.
+ */
+const toUsage = (usage: ChatUsage | undefined, latencyMs: number): Usage => {
+  if (!usage) return { ...emptyUsage(), latencyMs };
+
+  const reasoningTokens = usage.completionTokensDetails?.reasoningTokens;
+  const cachedTokens = usage.promptTokensDetails?.cachedTokens;
+  const cacheWriteTokens = usage.promptTokensDetails?.cacheWriteTokens;
+  return {
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    totalTokens: usage.totalTokens,
+    cost: usage.cost ?? 0,
+    ...(reasoningTokens != null ? { reasoningTokens } : {}),
+    ...(cachedTokens != null ? { cachedTokens } : {}),
+    ...(cacheWriteTokens != null ? { cacheWriteTokens } : {}),
+    latencyMs,
+  };
+};
 
 const toChatMessage = (message: LLMMessage): ChatMessages => {
   switch (message.role) {
@@ -204,7 +215,7 @@ export class OpenRouterStrategy implements LLMStrategy {
     messages: Array<LLMMessage>,
     options?: CompletionOptions,
   ): Promise<CompletionResult> {
-    const result = await this.send(messages, options);
+    const { result, latencyMs } = await this.send(messages, options);
     const choice = result.choices[0];
     const text = readText(choice?.message?.content);
 
@@ -214,7 +225,7 @@ export class OpenRouterStrategy implements LLMStrategy {
     if (text === undefined && choice?.finishReason === 'length') {
       return {
         text: '',
-        usage: toUsage(result.usage),
+        usage: toUsage(result.usage, latencyMs),
         finishReason: choice.finishReason,
       };
     }
@@ -227,7 +238,7 @@ export class OpenRouterStrategy implements LLMStrategy {
 
     return {
       text,
-      usage: toUsage(result.usage),
+      usage: toUsage(result.usage, latencyMs),
       ...(choice?.finishReason ? { finishReason: choice.finishReason } : {}),
     };
   }
@@ -237,7 +248,7 @@ export class OpenRouterStrategy implements LLMStrategy {
     tools: Array<ToolDefinition>,
     options?: CompletionOptions,
   ): Promise<ToolTurnResult> {
-    const result = await this.send(messages, options, tools);
+    const { result, latencyMs } = await this.send(messages, options, tools);
     const message = result.choices[0]?.message;
 
     const toolCalls: ToolCall[] = (message?.toolCalls ?? []).map((call) => ({
@@ -252,7 +263,7 @@ export class OpenRouterStrategy implements LLMStrategy {
       // A tool-calling turn usually has no prose; omit the key rather than pass ''.
       ...(text ? { text } : {}),
       toolCalls,
-      usage: toUsage(result.usage),
+      usage: toUsage(result.usage, latencyMs),
     };
   }
 
@@ -269,7 +280,7 @@ export class OpenRouterStrategy implements LLMStrategy {
     messages: Array<LLMMessage>,
     options?: CompletionOptions,
     tools?: Array<ToolDefinition>,
-  ): Promise<ChatResult> {
+  ): Promise<{ result: ChatResult; latencyMs: number }> {
     const responseJsonSchema = options?.responseSchema
       ? (toProviderJsonSchema(
           z.toJSONSchema(options.responseSchema.schema, {
@@ -305,8 +316,10 @@ export class OpenRouterStrategy implements LLMStrategy {
       stream: false as const,
     };
 
+    const startedAt = Date.now();
     try {
-      return await this.client.chat.send({ chatRequest });
+      const result = await this.client.chat.send({ chatRequest });
+      return { result, latencyMs: Date.now() - startedAt };
     } catch (error) {
       throw toLLMError(error);
     }

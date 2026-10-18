@@ -17,8 +17,10 @@ import type {
   BuildInput,
   DocumentCheck,
   DocumentDiagnostics,
+  RunLlmUsage,
   RunRecordHandle,
 } from './engine/workflow.types';
+import type { Usage } from '../llm/interfaces';
 import {
   CANDIDATE_SOURCE_RETENTION_MS,
   FailureCode,
@@ -131,6 +133,11 @@ export class WorkflowRunService {
    * runId here keeps every call site from re-threading it.
    */
   handleFor(runId: string): RunRecordHandle {
+    let llmUsage: RunLlmUsage | undefined;
+    // Rides along with the run's final update rather than costing its own.
+    const withLlmUsage = <T extends Partial<WorkflowRun>>(fields: T) =>
+      llmUsage ? { ...fields, llmUsage } : fields;
+
     return {
       runId,
       setCurrentStep: (step: WorkflowStep) =>
@@ -152,14 +159,25 @@ export class WorkflowRunService {
         this.saveDocumentDiagnostics(runId, diagnostics, failedCandidateSource),
       getLatestCompletedResearch: (artifactId: string) =>
         this.getLatestCompletedResearch(artifactId),
+      recordQueueWait: (queueWaitMs: number) =>
+        this.patch(runId, { queueWaitMs }),
+      recordModelCall: (usage: Usage) => {
+        llmUsage = addModelCall(llmUsage, usage);
+      },
       complete: (creditsUsed: number) =>
-        this.patch(runId, { status: RunStatus.COMPLETED, creditsUsed }),
+        this.patch(
+          runId,
+          withLlmUsage({ status: RunStatus.COMPLETED, creditsUsed }),
+        ),
       fail: (failureCode: FailureCode, failureReason: string) =>
-        this.patch(runId, {
-          status: RunStatus.FAILED,
-          failureCode,
-          failureReason,
-        }),
+        this.patch(
+          runId,
+          withLlmUsage({
+            status: RunStatus.FAILED,
+            failureCode,
+            failureReason,
+          }),
+        ),
     };
   }
 
@@ -287,6 +305,20 @@ export class WorkflowRunService {
     );
   }
 }
+
+const addModelCall = (
+  total: RunLlmUsage | undefined,
+  usage: Usage,
+): RunLlmUsage => ({
+  calls: (total?.calls ?? 0) + 1,
+  promptTokens: (total?.promptTokens ?? 0) + usage.promptTokens,
+  completionTokens: (total?.completionTokens ?? 0) + usage.completionTokens,
+  reasoningTokens: (total?.reasoningTokens ?? 0) + (usage.reasoningTokens ?? 0),
+  cachedTokens: (total?.cachedTokens ?? 0) + (usage.cachedTokens ?? 0),
+  cacheWriteTokens:
+    (total?.cacheWriteTokens ?? 0) + (usage.cacheWriteTokens ?? 0),
+  llmMs: (total?.llmMs ?? 0) + (usage.latencyMs ?? 0),
+});
 
 /** The one Candidate Source a run keeps in `role`. */
 const candidateSourceOf = (runId: string, role: RunCandidateSourceRole) => ({

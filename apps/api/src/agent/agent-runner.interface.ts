@@ -138,7 +138,15 @@ export interface AgentTurnUsage extends Usage {
   model: string;
   /** Why the turn stopped (`stop`, `length`, ...), when the provider said. */
   finishReason?: string;
+  /** DOCUMENT: which call the turn was. */
+  call?: DocumentModelCall;
 }
+
+/**
+ * A DOCUMENT model call: the draft, a Repair, or the one Zod repair turn
+ * either may spend on an invalid envelope.
+ */
+export type DocumentModelCall = 'draft' | 'repair' | 'envelope';
 
 /**
  * `AgentRunner` must not hold the meter, so usage leaves it through hooks the

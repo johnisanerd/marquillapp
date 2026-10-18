@@ -12,6 +12,8 @@ import type { StepHandler } from '../engine/workflow.types';
  *   count climbs while the run is still searching;
  * - each search → `{ kind: 'web_search', amount: 1 }`, the fixed surcharge.
  *
+ * Each LLM turn's tokens and time are tallied on the run record as well.
+ *
  * It writes the `research` slot **and** persists `researchContext` on the run
  * record, which is what lets a later refine reuse the findings with zero
  * re-search. Tool errors are absorbed inside the loop; only an LLM transport
@@ -23,12 +25,14 @@ export const researchStep: StepHandler = async (state, ctx) => {
   const research = await ctx.agent.research(
     { prompt, type, stylePreset },
     {
-      onUsage: (usage) =>
+      onUsage: (usage) => {
         ctx.meter.record({
           kind: USAGE_KINDS.LLM,
           amount: usage.cost,
           detail: { model: usage.model, totalTokens: usage.totalTokens },
-        }),
+        });
+        ctx.run.recordModelCall(usage);
+      },
       onToolCall: () =>
         ctx.meter.record({ kind: USAGE_KINDS.WEB_SEARCH, amount: 1 }),
     },

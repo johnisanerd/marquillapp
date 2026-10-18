@@ -778,6 +778,25 @@ Each DOCUMENT run records a **`documentDiagnostics`** block on `WorkflowRun`:
   `puppeteer.connect` gets none from Browserless (its docs return an id only from the session API,
   `POST /session`), so a `connect` timeout cannot yet be matched to a Browserless-side session.
 - `acceptedCandidate` (§7.3) and, on failure, the failed Candidate Source
+- what the model calls cost (#207): `promptTokens`, `reasoningTokens` (the share of output tokens
+  spent reasoning) and `cachedPromptTokens` (the share of prompt tokens read from the provider's
+  cache), summed over every job attempt like `outputTokens`, and `modelTurns`, one entry per model
+  call, oldest first: `call` (`draft`, `repair`, or `envelope` for the Zod repair turn either may
+  spend), `model`, `promptTokens`, `completionTokens`, `reasoningTokens` and `cachedTokens` when
+  the provider reports them, `latencyMs` and `finishReason`. Turns from earlier job attempts carry
+  over. The list keeps the latest `MAX_MODEL_TURNS` (24); a job attempt makes at most a draft and
+  `DOCUMENT_REPAIR_BUDGET` more calls, so a run never reaches it. Diagnostics from before #207
+  carry none of these.
+
+Every run, DOCUMENT or not, also records:
+
+- `llmUsage`: its model calls summed (`calls`, `promptTokens`, `completionTokens`,
+  `reasoningTokens`, `cachedTokens`, `cacheWriteTokens`, `llmMs`), written in the same update
+  that completes or fails the run. Like `creditsUsed` it describes the final job attempt, and it
+  is absent when that attempt ran in another process than the one that failed it.
+- `queueWaitMs`: the first job attempt's wait from enqueue to worker pickup
+  (`job.processedOn - job.timestamp`). A retry's wait would include the earlier attempts and their
+  backoff, so it is not recorded.
 
 ### 11.2 Test layers (#141)
 

@@ -163,7 +163,7 @@ const makeRun = () => {
         input: DocumentGenerateInput,
         hooks?: AgentHooks,
       ): Promise<DocumentDraftResult> => {
-        hooks?.onUsage?.(turn);
+        hooks?.onUsage?.({ ...turn, call: 'draft' });
         // As the real agent: a title only when one was asked for.
         return Promise.resolve({
           ...(input.includeTitle ? { title: 'Three fixes' } : {}),
@@ -178,7 +178,7 @@ const makeRun = () => {
         _input: DocumentRepairInput,
         hooks?: AgentHooks,
       ): Promise<DocumentRepairResult> => {
-        hooks?.onUsage?.(turn);
+        hooks?.onUsage?.({ ...turn, call: 'repair' });
         return Promise.resolve({ html: MARGIN_SAMPLE, envelopeRepairs: 0 });
       },
     ),
@@ -225,6 +225,8 @@ const makeRun = () => {
     getLatestCompletedResearch: jest.fn(),
     complete: jest.fn().mockResolvedValue(undefined),
     fail: jest.fn().mockResolvedValue(undefined),
+    recordQueueWait: jest.fn().mockResolvedValue(undefined),
+    recordModelCall: jest.fn(),
     readDocumentDiagnostics: jest.fn(() => Promise.resolve(diagnostics)),
     saveDocumentDiagnostics: jest.fn<
       Promise<void>,
@@ -1315,6 +1317,19 @@ describe('DOCUMENT generation, end to end', () => {
           'RESOLVE_INPUT',
         ]);
         expect(failedCandidate).toBe(OFF_SCALE);
+      });
+
+      it('should keep one model turn per draft and Repair call, and tally each on the run', async () => {
+        await runJob(run);
+
+        const { diagnostics } = savedDiagnostics(run);
+        expect(diagnostics.modelTurns.map(({ call }) => call)).toEqual([
+          'draft',
+          'repair',
+          'repair',
+        ]);
+        expect(diagnostics.promptTokens).toBe(12_000);
+        expect(run.runHandle.recordModelCall).toHaveBeenCalledTimes(3);
       });
 
       it('should log one completion line with the failureCode, and no source, brief or violation detail', async () => {
