@@ -7,10 +7,12 @@ import type {
 } from '../../artifact/artifact-writer.interface';
 import type {
   AgentRunner,
+  DocumentModelCall,
   ResearchResult,
 } from '../../agent/agent-runner.interface';
 import type { StylePreset } from '../../agent/style-presets.config';
 import type { UsageRecord } from '../../feature-gating/credit-meter.constants';
+import type { Usage } from '../../llm/interfaces';
 import type { RenderAttemptUsage } from '../../document-render/render-usage.types';
 import type { RenderSessionResult } from '../../document-render/render-session';
 import type { DesignSystemDefinition } from '../../design-system/design-system-definition';
@@ -120,6 +122,18 @@ export interface JobAttemptFailure {
   message: string;
 }
 
+/** One DOCUMENT model call, as the run's diagnostics keep it. */
+export interface ModelTurn {
+  model: string;
+  call?: DocumentModelCall;
+  promptTokens: number;
+  completionTokens: number;
+  reasoningTokens?: number;
+  cachedTokens?: number;
+  latencyMs?: number;
+  finishReason?: string;
+}
+
 /**
  * DOCUMENT: what one run did, across every job attempt (spec §11.1). The
  * worker writes it when a job attempt fails and when the run ends, and the
@@ -145,6 +159,17 @@ export interface DocumentDiagnostics {
   finishReason?: string;
   /** Completion tokens over every model turn of every job attempt. */
   outputTokens: number;
+  /** Prompt tokens over every model turn of every job attempt. */
+  promptTokens: number;
+  /** The share of `outputTokens` the model spent reasoning. */
+  reasoningTokens: number;
+  /** The share of `promptTokens` read from the provider's prompt cache. */
+  cachedPromptTokens: number;
+  /**
+   * Every model call of every job attempt, oldest first, bounded to the
+   * latest `MAX_MODEL_TURNS`.
+   */
+  modelTurns: ModelTurn[];
   pageCount?: number;
   /** Summed over job attempts. */
   stepWallTimeMs: Partial<Record<WorkflowStep, number>>;
@@ -177,10 +202,7 @@ export interface DocumentDiagnostics {
 export interface RunDiagnostics {
   stepStarted(step: WorkflowStep): void;
   stepCompleted(step: WorkflowStep): void;
-  recordModelTurn(turn: {
-    completionTokens: number;
-    finishReason?: string;
-  }): void;
+  recordModelTurn(turn: ModelTurn): void;
   recordCheck(
     phase: DocumentCheck['phase'],
     candidate: string,
@@ -270,6 +292,21 @@ export interface CreditMeter {
   commit(): Promise<void>;
 }
 
+/**
+ * What one job attempt's model calls cost, summed. Written with the run's
+ * completion or failure; like `creditsUsed`, it describes the final attempt.
+ */
+export interface RunLlmUsage {
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  reasoningTokens: number;
+  cachedTokens: number;
+  cacheWriteTokens: number;
+  /** Wall time spent waiting on the model, summed over the calls. */
+  llmMs: number;
+}
+
 /** The durable run record, narrowed to what the engine and its steps write. */
 export interface RunRecordHandle {
   readonly runId: string;
@@ -293,6 +330,13 @@ export interface RunRecordHandle {
   getLatestCompletedResearch(
     artifactId: string,
   ): Promise<ResearchResult | undefined>;
+  /** The time from enqueue to the worker picking the job up. */
+  recordQueueWait(queueWaitMs: number): Promise<void>;
+  /**
+   * Tallies one model call in memory. `complete` and `fail` on the same
+   * handle write the sum as `llmUsage`, in the update they already make.
+   */
+  recordModelCall(usage: Usage): void;
   complete(creditsUsed: number): Promise<void>;
   fail(failureCode: FailureCode, failureReason: string): Promise<void>;
 }

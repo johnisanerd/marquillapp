@@ -29,7 +29,10 @@ const research: ResearchResult = {
 const makeStep = () => {
   const agent = { generate: jest.fn(), research: jest.fn() };
   const meter = { record: jest.fn() };
-  const run = { saveResearchContext: jest.fn().mockResolvedValue(undefined) };
+  const run = {
+    saveResearchContext: jest.fn().mockResolvedValue(undefined),
+    recordModelCall: jest.fn(),
+  };
   const emit = jest.fn();
   const ctx = { agent, meter, run, emit } as unknown as StepContext;
 
@@ -108,6 +111,24 @@ describe('researchStep', () => {
       kind: 'web_search',
       amount: 1,
     });
+  });
+
+  it("should tally each LLM turn's usage on the run record", async () => {
+    const first = turnUsage({ cost: 0.03, latencyMs: 2000 });
+    const second = turnUsage({ cost: 0.01, reasoningTokens: 40 });
+    mocks.agent.research.mockImplementation(
+      (_input: unknown, hooks: AgentHooks) => {
+        hooks.onUsage?.(first);
+        hooks.onUsage?.(second);
+        return Promise.resolve(research);
+      },
+    );
+
+    await researchStep(fixtures.state, ctx);
+
+    expect(mocks.run.recordModelCall).toHaveBeenCalledTimes(2);
+    expect(mocks.run.recordModelCall).toHaveBeenNthCalledWith(1, first);
+    expect(mocks.run.recordModelCall).toHaveBeenNthCalledWith(2, second);
   });
 
   it('should emit a step.progress with the number of sources found', async () => {

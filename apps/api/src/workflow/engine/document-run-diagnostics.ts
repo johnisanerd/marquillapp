@@ -7,9 +7,17 @@ import type {
   DocumentCheck,
   DocumentDiagnostics,
   JobAttemptFailure,
+  ModelTurn,
   RunDiagnostics,
   ViolationCode,
 } from './workflow.types';
+
+/**
+ * The most model calls a run's diagnostics keep, the latest first to stay. A
+ * job attempt makes at most a draft and `DOCUMENT_REPAIR_BUDGET` more turns,
+ * so a run within its job attempts never reaches it.
+ */
+export const MAX_MODEL_TURNS = 24;
 
 /** Which run and job attempt the diagnostics describe. */
 export interface DiagnosticsStart {
@@ -64,6 +72,10 @@ export class DocumentRunDiagnostics implements RunDiagnostics {
   private latestCandidate?: string;
   private repairRounds = 0;
   private outputTokens: number;
+  private promptTokens: number;
+  private reasoningTokens: number;
+  private cachedPromptTokens: number;
+  private modelTurns: ModelTurn[];
   private finishReason?: string;
   private sessions: number;
   private pages?: number;
@@ -86,6 +98,11 @@ export class DocumentRunDiagnostics implements RunDiagnostics {
       checks: [...candidate.checks],
     }));
     this.outputTokens = prior?.outputTokens ?? 0;
+    // Absent from diagnostics recorded before they were kept.
+    this.promptTokens = prior?.promptTokens ?? 0;
+    this.reasoningTokens = prior?.reasoningTokens ?? 0;
+    this.cachedPromptTokens = prior?.cachedPromptTokens ?? 0;
+    this.modelTurns = [...(prior?.modelTurns ?? [])];
     this.finishReason = prior?.finishReason;
     this.sessions = prior?.renderAttempts.sessions ?? 0;
     this.pages = prior?.pageCount;
@@ -104,15 +121,15 @@ export class DocumentRunDiagnostics implements RunDiagnostics {
       (this.stepWallTimeMs[step] ?? 0) + this.now() - startedAt;
   }
 
-  recordModelTurn({
-    completionTokens,
-    finishReason,
-  }: {
-    completionTokens: number;
-    finishReason?: string;
-  }): void {
-    this.outputTokens += completionTokens;
-    this.finishReason = finishReason;
+  recordModelTurn(usage: ModelTurn): void {
+    this.outputTokens += usage.completionTokens;
+    this.promptTokens += usage.promptTokens;
+    this.reasoningTokens += usage.reasoningTokens ?? 0;
+    this.cachedPromptTokens += usage.cachedTokens ?? 0;
+    this.finishReason = usage.finishReason;
+    this.modelTurns = [...this.modelTurns, toModelTurn(usage)].slice(
+      -MAX_MODEL_TURNS,
+    );
   }
 
   recordCheck(
@@ -185,6 +202,10 @@ export class DocumentRunDiagnostics implements RunDiagnostics {
         ? { finishReason: this.finishReason }
         : {}),
       outputTokens: this.outputTokens,
+      promptTokens: this.promptTokens,
+      reasoningTokens: this.reasoningTokens,
+      cachedPromptTokens: this.cachedPromptTokens,
+      modelTurns: this.modelTurns,
       ...(this.pages !== undefined ? { pageCount: this.pages } : {}),
       stepWallTimeMs: this.stepWallTimeMs,
       wallTimeMs: this.priorWallTimeMs + this.now() - this.startedAt,
@@ -221,6 +242,32 @@ export class DocumentRunDiagnostics implements RunDiagnostics {
     };
     return `[DOCUMENT_RUN] ${JSON.stringify(fields)}`;
   }
+}
+
+/**
+ * Names its fields, so a turn's usage keeps only what the diagnostics describe
+ * (no cost: credits are the run's own record).
+ */
+function toModelTurn({
+  call,
+  model,
+  promptTokens,
+  completionTokens,
+  reasoningTokens,
+  cachedTokens,
+  latencyMs,
+  finishReason,
+}: ModelTurn): ModelTurn {
+  return {
+    ...(call !== undefined ? { call } : {}),
+    model,
+    promptTokens,
+    completionTokens,
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(cachedTokens !== undefined ? { cachedTokens } : {}),
+    ...(latencyMs !== undefined ? { latencyMs } : {}),
+    ...(finishReason !== undefined ? { finishReason } : {}),
+  };
 }
 
 function countByCode(

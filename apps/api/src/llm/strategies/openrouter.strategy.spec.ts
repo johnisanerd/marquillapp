@@ -56,8 +56,12 @@ let strategy: OpenRouterStrategy;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // Frozen, so a call's measured latency is 0 unless a test advances the clock.
+  jest.useFakeTimers();
   ({ strategy } = makeStrategy());
 });
+
+afterEach(() => jest.useRealTimers());
 
 describe('OpenRouterStrategy', () => {
   describe('constructor', () => {
@@ -86,6 +90,7 @@ describe('OpenRouterStrategy', () => {
           completionTokens: 30,
           totalTokens: 150,
           cost: 0.00042,
+          latencyMs: 0,
         },
       });
     });
@@ -120,6 +125,7 @@ describe('OpenRouterStrategy', () => {
           completionTokens: 30,
           totalTokens: 150,
           cost: 0.00042,
+          latencyMs: 0,
         },
         finishReason: 'length',
       });
@@ -138,6 +144,58 @@ describe('OpenRouterStrategy', () => {
       expect(result.usage.cost).toBe(0);
     });
 
+    it('should map reasoning, cached and cache-write tokens when the provider reports them', async () => {
+      send.mockResolvedValue({
+        choices: [{ message: { content: 'x' } }],
+        usage: {
+          ...usage,
+          completionTokensDetails: { reasoningTokens: 18 },
+          promptTokensDetails: { cachedTokens: 100, cacheWriteTokens: 20 },
+        },
+      });
+
+      const result = await strategy.complete([
+        { role: MessageRole.User, content: 'hi' },
+      ]);
+
+      expect(result.usage).toMatchObject({
+        reasoningTokens: 18,
+        cachedTokens: 100,
+        cacheWriteTokens: 20,
+      });
+    });
+
+    it('should omit the token details the provider does not report', async () => {
+      send.mockResolvedValue({
+        choices: [{ message: { content: 'x' } }],
+        usage: { ...usage, completionTokensDetails: { reasoningTokens: null } },
+      });
+
+      const result = await strategy.complete([
+        { role: MessageRole.User, content: 'hi' },
+      ]);
+
+      expect(result.usage).not.toHaveProperty('reasoningTokens');
+      expect(result.usage).not.toHaveProperty('cachedTokens');
+      expect(result.usage).not.toHaveProperty('cacheWriteTokens');
+    });
+
+    it('should report how long the call took', async () => {
+      send.mockImplementation(() => {
+        jest.advanceTimersByTime(1250);
+        return Promise.resolve({
+          choices: [{ message: { content: 'x' } }],
+          usage,
+        });
+      });
+
+      const result = await strategy.complete([
+        { role: MessageRole.User, content: 'hi' },
+      ]);
+
+      expect(result.usage.latencyMs).toBe(1250);
+    });
+
     it('should report zeroed usage when the response carries none', async () => {
       send.mockResolvedValue({ choices: [{ message: { content: 'x' } }] });
 
@@ -150,6 +208,7 @@ describe('OpenRouterStrategy', () => {
         completionTokens: 0,
         totalTokens: 0,
         cost: 0,
+        latencyMs: 0,
       });
     });
 
@@ -487,6 +546,7 @@ describe('OpenRouterStrategy', () => {
         { id: 'call_1', name: 'searchWeb', input: { query: 'nestjs testing' } },
       ]);
       expect(result.usage.cost).toBe(0.00042);
+      expect(result.usage.latencyMs).toBe(0);
       expect(result).not.toHaveProperty('text');
     });
 
@@ -532,6 +592,7 @@ describe('OpenRouterStrategy', () => {
           completionTokens: 30,
           totalTokens: 150,
           cost: 0.00042,
+          latencyMs: 0,
         },
       });
     });

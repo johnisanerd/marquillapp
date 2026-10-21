@@ -21,6 +21,9 @@ import type { DocumentDiagnostics } from './engine/workflow.types';
 import { FailureCode, WorkflowStep } from './workflow.constants';
 import { WorkflowRunService } from './workflow-run.service';
 
+// Typed, so an update filter can be written as an object without an `any`.
+const byRunId = { _id: expect.any(Types.ObjectId) as unknown };
+
 describe('WorkflowRunService', () => {
   const makeService = () => {
     const workflowRunModel = {
@@ -504,6 +507,100 @@ describe('WorkflowRunService', () => {
           },
         },
       );
+    });
+
+    it("should write the job attempt's summed LLM usage with its completion, in one update", async () => {
+      const run = service.handleFor(fixtures.runId);
+      run.recordModelCall({
+        promptTokens: 1200,
+        completionTokens: 800,
+        totalTokens: 2000,
+        cost: 0.01,
+        reasoningTokens: 300,
+        cachedTokens: 1000,
+        latencyMs: 9000,
+      });
+      run.recordModelCall({
+        promptTokens: 400,
+        completionTokens: 100,
+        totalTokens: 500,
+        cost: 0.002,
+        cacheWriteTokens: 200,
+        latencyMs: 1500,
+      });
+
+      await run.complete(38);
+
+      expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledTimes(1);
+      expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(byRunId, {
+        $set: {
+          status: RunStatus.COMPLETED,
+          creditsUsed: 38,
+          llmUsage: {
+            calls: 2,
+            promptTokens: 1600,
+            completionTokens: 900,
+            reasoningTokens: 300,
+            cachedTokens: 1000,
+            cacheWriteTokens: 200,
+            llmMs: 10_500,
+          },
+        },
+      });
+    });
+
+    it("should write the job attempt's summed LLM usage with its failure, in one update", async () => {
+      const run = service.handleFor(fixtures.runId);
+      run.recordModelCall({
+        promptTokens: 1200,
+        completionTokens: 800,
+        totalTokens: 2000,
+        cost: 0.01,
+      });
+
+      await run.fail(FailureCode.INTERNAL, 'the model is down');
+
+      expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledTimes(1);
+      expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(byRunId, {
+        $set: {
+          status: RunStatus.FAILED,
+          failureCode: 'internal',
+          failureReason: 'the model is down',
+          llmUsage: {
+            calls: 1,
+            promptTokens: 1200,
+            completionTokens: 800,
+            reasoningTokens: 0,
+            cachedTokens: 0,
+            cacheWriteTokens: 0,
+            llmMs: 0,
+          },
+        },
+      });
+    });
+
+    it('should not tally model calls recorded on another handle for the same run', async () => {
+      service.handleFor(fixtures.runId).recordModelCall({
+        promptTokens: 1,
+        completionTokens: 1,
+        totalTokens: 2,
+        cost: 0,
+      });
+
+      await service.handleFor(fixtures.runId).complete(0);
+
+      expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(
+        expect.anything(),
+        { $set: { status: RunStatus.COMPLETED, creditsUsed: 0 } },
+      );
+    });
+
+    it('should record how long the job waited in the queue', async () => {
+      await service.handleFor(fixtures.runId).recordQueueWait(4200);
+
+      expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(byRunId, {
+        $set: { queueWaitMs: 4200 },
+      });
     });
   });
 });

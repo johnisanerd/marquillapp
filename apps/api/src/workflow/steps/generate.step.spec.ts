@@ -54,6 +54,7 @@ const makeStep = () => {
   const run = {
     recordDocumentCheck: jest.fn().mockResolvedValue(undefined),
     readAcceptedCandidate: jest.fn().mockResolvedValue(undefined),
+    recordModelCall: jest.fn(),
   };
   const emit = jest.fn();
   const deadline = { assertTimeLeft: jest.fn() };
@@ -174,6 +175,20 @@ describe('generateStep', () => {
       2,
       expect.objectContaining({ amount: 0.02 }),
     );
+  });
+
+  it("should tally each LLM turn's usage on the run record", async () => {
+    const usage = turnUsage({ cost: 0.01, latencyMs: 4000 });
+    mocks.agent.generate.mockImplementation(
+      (_input: unknown, hooks: AgentHooks) => {
+        hooks.onUsage?.(usage);
+        return Promise.resolve({ content: { commentary: 'ok' } });
+      },
+    );
+
+    await generateStep(fixtures.state, ctx);
+
+    expect(mocks.run.recordModelCall).toHaveBeenCalledWith(usage);
   });
 
   it('should fail terminally when the content is invalid after the repair retry', async () => {
