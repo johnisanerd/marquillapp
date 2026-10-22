@@ -71,7 +71,7 @@ Queue producers (`WorkflowQueue`, `ScheduleQueue`, etc.) live in `src/workflow/`
 
 ### Feature gating
 
-`src/feature-gating/FeatureGatingService` enforces tier-based limits on `credits`, `scheduled_posts`, and `connected_accounts`. It resolves the user's active tier by checking `Subscription` (Paddle-managed) with fallback to the default `Tier`. Usage is tracked in the `Usage` collection keyed by `(user_id, feature, periodStart)`, and artifact runs settle LLM and web-search cost through `CreditMeterService`.
+`src/feature-gating/FeatureGatingService` enforces tier-based limits on `credits`, `scheduled_posts`, and `connected_accounts`. `resolveEntitlement` reads `Subscription` (Paddle-managed) once and returns the tier, with fallback to the default `Tier`, and the usage period from the same decision; tiers are cached in process (`FEATURE_TIER_CACHE_TTL_MS`). Callers that already resolved an entitlement pass it on: a launch gates through `assertLaunch`, and the worker resolves it once per job attempt for the research check and `RunCreditMeter`. Usage is tracked in the `Usage` collection keyed by `(user_id, feature, periodStart)`, and artifact runs settle LLM and web-search cost through `CreditMeterService`.
 
 `SubscriptionAccessGuard` runs on protected routes to attach `entitlementTier`, `entitlementSource`, and `subscriptionStatus` to the request object.
 
@@ -122,6 +122,12 @@ Optional keys in the example (worker):
 - `TAVILY_TIMEOUT_S` (default `10`) — per-search Tavily timeout in seconds
 - `TAVILY_SEARCH_DEPTH` (default `advanced`, or `basic`) — Tavily search depth
 - `RESEARCH_REASONING_EFFORT`, `GENERATION_REASONING_EFFORT`, `DOCUMENT_DRAFT_REASONING_EFFORT`, `DOCUMENT_REPAIR_REASONING_EFFORT` (default unset: no effort sent) — reasoning effort for each call site of `AgentRunnerService`; an unknown value fails worker boot. Which efforts a model accepts differs per model, so check the model before setting one (see `.env.example`).
+
+Optional integer settings are read with `readIntEnv` (`src/common/env.ts`): unset or blank gives the default, and anything that is not a base-10 integer within bounds fails boot, naming the key.
+- `MONGO_MAX_POOL_SIZE` (default `10`, min 1), `MONGO_MIN_POOL_SIZE` (default `2`, must not exceed max) — Mongo connection pool, per process (`mongoOptionsFrom` in `src/database/mongo-options.ts`). **Sizing rule:** the worker's pool must be at least its total worker concurrency + 10.
+- `FEATURE_TIER_CACHE_TTL_MS` (default `60000`; `0` disables) — API and worker. How long `FeatureGatingService` caches a tier document in process. Tiers change only through the seed script, so a re-seed applies within this window; the subscription is never cached.
+- `OPENROUTER_TIMEOUT_MS` (default `240000`, min 1), `OPENROUTER_MAX_ATTEMPTS` (default `3`, min 1), `OPENROUTER_RETRY_BASE_MS` (default `1000`), `OPENROUTER_RETRY_MAX_DELAY_MS` (default `15000`), `OPENROUTER_RETRY_BUDGET_MS` (default `45000`) — the app-owned retry loop in `OpenRouterStrategy` (`src/llm/strategies/openrouter-retry.ts`); the SDK's retries are off. Per try: a timeout of `min(OPENROUTER_TIMEOUT_MS, the call's timeoutMs, time left before its deadlineAt)` (research turns ask 45 s; DOCUMENT drafts and Repairs pass the run deadline). Retryable failures (`toLLMError`: 408, 429, 5xx, transport and timeout errors, provider errors after `200 OK`) sleep `Retry-After` or full jitter; a call stops when tries run out, when its total sleep would pass the budget, or when the next try would start past its deadline. A caller's abort is never retried. `OPENROUTER_MAX_ATTEMPTS=1` restores single-try behaviour. Read by both processes, so a bad value fails either boot.
+- `WORKER_SHUTDOWN_TIMEOUT_MS` (default `120000`; worker only) — on the first `SIGTERM` or `SIGINT` the worker stops taking jobs, lets running ones finish, waits for their failure handlers, closes the app and exits 0; past this timeout it exits 1, and the unfinished job stalls and resumes on the next worker (`worker-shutdown.ts`). The host's drain window must be longer: on Railway, `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=130` (see `docs/monorepo.md`). Start the worker with `node` directly; a package-manager wrapper can swallow `SIGTERM`.
 
 ## Production
 

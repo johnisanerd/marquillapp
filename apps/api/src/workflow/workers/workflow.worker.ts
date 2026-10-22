@@ -1,4 +1,4 @@
-import { Job, Worker } from 'bullmq';
+import { Job, QueueEvents, Worker } from 'bullmq';
 import {
   EMAIL_QUEUE_NAME,
   LINKEDIN_AVATAR_REFRESH_QUEUE_NAME,
@@ -17,6 +17,7 @@ import { User } from '../../database/schemas';
 import { AuthService } from '../../auth/auth.service';
 import { MailService } from '../../mail';
 import { EmailQueue } from '../email.queue';
+import { WorkflowQueue } from '../workflow.queue';
 import { processEmailJob } from './email.worker.handler';
 import { ArtifactRunProcessor } from './artifact-run.worker.handler';
 import { AgentRunnerService } from '../../agent/agent-runner.service';
@@ -35,12 +36,19 @@ import {
   handleMediaUploadJobExhausted,
   processMediaUploadJob,
 } from './media-upload.worker.handler';
+import { handleStalledFailure } from './stalled-failure';
+import {
+  installWorkerShutdown,
+  readWorkerShutdownTimeoutMs,
+} from './worker-shutdown';
 
 async function bootstrapWorker() {
   const logger = new Logger(
     bootstrapWorker.name.charAt(0).toUpperCase() +
       bootstrapWorker.name.slice(1),
   );
+  // Read before the app boots, so a bad value fails fast.
+  const shutdownTimeoutMs = readWorkerShutdownTimeoutMs(process.env);
   logger.log('Bootstrapping workflow context...');
   const app = await NestFactory.createApplicationContext(WorkerModule);
 
@@ -82,6 +90,9 @@ async function bootstrapWorker() {
         maxRetriesPerRequest: null,
         enableReadyCheck: false,
       },
+      // A job whose lock lapsed is restarted twice, then failed.
+      maxStalledCount: 2,
+      stalledInterval: 10_000,
     },
   );
 
@@ -91,7 +102,25 @@ async function bootstrapWorker() {
     artifactRuns.onFailed(job, error).catch((err) => logger.error(err));
   });
 
-  new Worker(
+  // Queue-wide: a job that stalled out ends its run even when no worker in
+  // this process reports it. `onFailed` ends a run at most once.
+  const workflowQueue = app.get(WorkflowQueue).queue;
+  const workflowEvents = new QueueEvents(QUEUE_NAME, {
+    connection: {
+      url: process.env.REDIS_URL!,
+      maxRetriesPerRequest: null,
+      enableReadyCheck: false,
+    },
+  });
+  workflowEvents.on('failed', (event) => {
+    handleStalledFailure(event, {
+      getJob: (jobId) => workflowQueue.getJob(jobId),
+      onFailed: (job, error) => artifactRuns.onFailed(job, error),
+      logger,
+    }).catch((err) => logger.error(err));
+  });
+
+  const scheduleWorker = new Worker(
     SCHEDULE_QUEUE_NAME,
     async (job: Job) => {
       try {
@@ -128,7 +157,7 @@ async function bootstrapWorker() {
     },
   );
 
-  new Worker(
+  const avatarRefreshWorker = new Worker(
     LINKEDIN_AVATAR_REFRESH_QUEUE_NAME,
     async (job: Job) => {
       try {
@@ -158,7 +187,7 @@ async function bootstrapWorker() {
     },
   );
 
-  new Worker(
+  const emailWorker = new Worker(
     EMAIL_QUEUE_NAME,
     async (job: Job) => {
       try {
@@ -207,6 +236,27 @@ async function bootstrapWorker() {
     logger.warn(
       `Media upload job ${job.id} failed (attempt ${job.attemptsMade}/${job.opts.attempts ?? 1}): ${error.message}`,
     );
+  });
+
+  installWorkerShutdown({
+    signals: process,
+    closables: [
+      workflowWorker,
+      scheduleWorker,
+      avatarRefreshWorker,
+      emailWorker,
+      mediaUploadWorker,
+    ],
+    listeners: [workflowEvents],
+    idle: () => artifactRuns.idle(),
+    app,
+    exit: (code) => process.exit(code),
+    timeoutMs: shutdownTimeoutMs,
+    timers: {
+      setTimeout: (callback, ms) => setTimeout(callback, ms),
+      clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+    },
+    logger,
   });
 }
 bootstrapWorker();

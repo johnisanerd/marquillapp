@@ -50,6 +50,7 @@ describe('runWorkflow', () => {
     const run = {
       runId: '665f1b2c3d4e5f6a7b8c9d03',
       saveResearchContext: jest.fn().mockResolvedValue(undefined),
+      readResearchContext: jest.fn().mockResolvedValue(undefined),
       complete: jest.fn().mockResolvedValue(undefined),
       fail: jest.fn().mockResolvedValue(undefined),
     };
@@ -655,6 +656,16 @@ describe('handleTerminalFailure', () => {
 
     expect(mocks.run.fail).toHaveBeenCalled();
     expect(mocks.logger.error).toHaveBeenCalled();
+  });
+
+  it('should not emit run.failed again when the run had already ended', async () => {
+    // A replayed failure: the worker's failed event and the stalled-job
+    // listener can both report the same job.
+    mocks.run.fail.mockResolvedValue('ALREADY_ENDED');
+
+    await expect(handleTerminalFailure(deps, failure)).resolves.toBeNull();
+
+    expect(mocks.emitter.emit).not.toHaveBeenCalled();
   });
 
   it('should still emit run.failed when marking the run fails', async () => {

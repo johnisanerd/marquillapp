@@ -34,6 +34,7 @@ import type {
   StepContext,
 } from '../engine/workflow.types';
 import { artifactStepHandlers } from '../steps';
+import { STALLED_FAILURE_REASON } from './stalled-failure';
 
 /** The narrow slice of `WorkflowRunService` the worker needs. */
 export interface RunRecordStore {
@@ -90,16 +91,31 @@ export const isTerminalJobFailure = (job: Job, error: Error): boolean =>
  */
 export class ArtifactRunProcessor {
   private readonly jobAttempts = new Map<string, JobAttemptState>();
+  /** `onFailed` calls still running, so a shutdown can wait for them. */
+  private readonly inFlightFailures = new Set<Promise<void>>();
 
   constructor(private readonly deps: ArtifactRunDeps) {}
 
   async process(job: Job<BuildInput>): Promise<void> {
     const runId = this.runIdOf(job);
     const { logger, redis, creditMeter, runs } = this.deps;
+    const run = runs.handleFor(runId);
+
+    // One entitlement per job attempt: the research check, the balance check
+    // and the debit all reuse it, so gating costs a subscription read and a
+    // usage read. Resolved per job attempt, since a plan can change while a
+    // retry waits.
+    const [entitlement, prior] = await Promise.all([
+      this.deps.featureGating.resolveEntitlement(job.data.userId),
+      this.readPriorDiagnostics(job, run),
+    ]);
 
     if (job.data.kind === RunKind.INITIAL && job.data.withResearch) {
       try {
-        await this.deps.featureGating.assertResearchAccess(job.data.userId);
+        await this.deps.featureGating.assertResearchAccess(
+          job.data.userId,
+          entitlement,
+        );
       } catch (error: unknown) {
         if (error instanceof FeatureGateForbiddenException) {
           throw new UnrecoverableError(
@@ -111,7 +127,6 @@ export class ArtifactRunProcessor {
     }
 
     const emitter = new RunEventEmitter(redis, runId, logger);
-    const run = runs.handleFor(runId);
     await this.recordQueueWait(job, run);
     const subject = alertSubject(runId, job.data);
     const meter = new RunCreditMeter(
@@ -120,13 +135,14 @@ export class ArtifactRunProcessor {
       subject,
       (event) => emitter.emit(event),
       logger,
+      entitlement,
     );
     // `attemptsMade` counts the job attempts that already failed.
     const diagnostics = new DocumentRunDiagnostics({
       runId,
       input: job.data,
       jobAttempt: job.attemptsMade + 1,
-      prior: await this.readPriorDiagnostics(job, run),
+      prior,
     });
     this.jobAttempts.set(runId, { emitter, meter, diagnostics, run });
 
@@ -170,7 +186,33 @@ export class ArtifactRunProcessor {
    * A DOCUMENT run's error text can quote model output, so it is kept in the
    * run's diagnostics and never logged (spec §11.6); the logs get its code.
    */
-  async onFailed(job: Job<BuildInput>, error: Error): Promise<void> {
+  onFailed(job: Job<BuildInput>, error: Error): Promise<void> {
+    const handling = this.handleFailedJobAttempt(job, error);
+    const tracked = handling.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.inFlightFailures.add(tracked);
+    void tracked.then(() => this.inFlightFailures.delete(tracked));
+    return handling;
+  }
+
+  /**
+   * Resolves once every `onFailed` call has settled, including any that start
+   * while it waits. The worker's shutdown awaits this after closing the
+   * BullMQ workers, so a terminal failure is written before Mongo and Redis
+   * close.
+   */
+  async idle(): Promise<void> {
+    while (this.inFlightFailures.size > 0) {
+      await Promise.all(this.inFlightFailures);
+    }
+  }
+
+  private async handleFailedJobAttempt(
+    job: Job<BuildInput>,
+    error: Error,
+  ): Promise<void> {
     const { logger } = this.deps;
     const isDocument = job.data.type === ArtifactType.DOCUMENT;
     // A DOCUMENT failure carries a stable code with its own client wording;
@@ -215,9 +257,11 @@ export class ArtifactRunProcessor {
     // fresh emitter restarts `seq`, a lesser evil than losing the client's
     // `run.failed`.
     logger.error(`Artifact run ${runId} failed terminally: ${cause}`);
+    // A stalled-out job is unrecoverable, but BullMQ's reason means nothing
+    // to the user.
     const failureReason =
       FAILURE_REASONS[failureCode] ??
-      (isUnrecoverableFailure(error)
+      (isUnrecoverableFailure(error) && error.message !== STALLED_FAILURE_REASON
         ? describeError(error)
         : TEMPORARY_FAILURE_REASON);
 
@@ -235,6 +279,9 @@ export class ArtifactRunProcessor {
         failureReason,
       },
     );
+
+    // The run had already ended, and been described, through another report.
+    if (storedCode === null) return;
 
     if (isDocument) {
       await this.recordDocumentRun(job, runId, await diagnostics(), {

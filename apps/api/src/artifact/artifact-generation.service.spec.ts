@@ -16,11 +16,6 @@ jest.mock('./artifact.service', () => ({ ArtifactService: class {} }), {
   virtual: true,
 });
 jest.mock(
-  'src/feature-gating/credit-meter.service',
-  () => ({ CreditMeterService: class {} }),
-  { virtual: true },
-);
-jest.mock(
   'src/feature-gating/feature-gating.service',
   () => ({ FeatureGatingService: class {} }),
   { virtual: true },
@@ -39,7 +34,24 @@ jest.mock('src/workflow/workflow.queue', () => ({ WorkflowQueue: class {} }), {
   virtual: true,
 });
 
+// The real gate, for counting its reads: its own relative import of the
+// schema barrel, which would otherwise drag in Mongoose.
+jest.mock(
+  '../database/schemas',
+  () => ({
+    SubscriptionStatus: { ACTIVE: 'ACTIVE', PAST_DUE: 'PAST_DUE' },
+    Subscription: class Subscription {},
+    Tier: class Tier {},
+    Usage: class Usage {},
+    Artifact: class Artifact {},
+    ArtifactType: { POST: 'POST', POLL: 'POLL', DOCUMENT: 'DOCUMENT' },
+  }),
+  { virtual: true },
+);
+
 import { BadRequestException } from '@nestjs/common';
+import { Types } from 'mongoose';
+import { FeatureGatingService } from '../feature-gating/feature-gating.service';
 import { ArtifactType, RunKind } from 'src/database/schemas';
 import { ArtifactGenerationService } from './artifact-generation.service';
 
@@ -57,11 +69,8 @@ describe('ArtifactGenerationService', () => {
     const workflowRunService = {
       createRun: jest.fn().mockResolvedValue({ _id: 'run123' }),
     };
-    const creditMeter = {
-      assertBalance: jest.fn().mockResolvedValue(undefined),
-    };
     const featureGating = {
-      assertResearchAccess: jest.fn().mockResolvedValue(undefined),
+      assertLaunch: jest.fn().mockResolvedValue({}),
     };
     const workflowQueue = {
       addArtifactRunJob: jest.fn().mockResolvedValue(undefined),
@@ -80,7 +89,6 @@ describe('ArtifactGenerationService', () => {
     const service = new ArtifactGenerationService(
       artifactService as any,
       workflowRunService as any,
-      creditMeter as any,
       featureGating as any,
       workflowQueue as any,
       designSystems as any,
@@ -97,7 +105,6 @@ describe('ArtifactGenerationService', () => {
       mocks: {
         artifactService,
         workflowRunService,
-        creditMeter,
         featureGating,
         workflowQueue,
         designSystems,
@@ -125,7 +132,7 @@ describe('ArtifactGenerationService', () => {
 
   describe('launchInitialRun', () => {
     it('should reject a research run before creating or queueing anything when the tier disables research', async () => {
-      mocks.featureGating.assertResearchAccess.mockRejectedValue(
+      mocks.featureGating.assertLaunch.mockRejectedValue(
         new Error('FEATURE_LIMIT_EXCEEDED'),
       );
 
@@ -133,25 +140,23 @@ describe('ArtifactGenerationService', () => {
         service.launchInitialRun(fixtures.userId, fixtures.dto),
       ).rejects.toThrow('FEATURE_LIMIT_EXCEEDED');
 
-      expect(mocks.creditMeter.assertBalance).not.toHaveBeenCalled();
       expect(mocks.artifactService.createArtifact).not.toHaveBeenCalled();
       expect(mocks.workflowRunService.createRun).not.toHaveBeenCalled();
       expect(mocks.workflowQueue.addArtifactRunJob).not.toHaveBeenCalled();
     });
 
     it.each([ArtifactType.POST, ArtifactType.POLL, ArtifactType.DOCUMENT])(
-      'should allow a paid research-enabled %s run to continue to the balance check',
+      'should gate a research-enabled %s run on research access and balance in one check',
       async (type) => {
         await service.launchInitialRun(fixtures.userId, {
           ...fixtures.dto,
           type,
         });
 
-        expect(mocks.featureGating.assertResearchAccess).toHaveBeenCalledWith(
+        expect(mocks.featureGating.assertLaunch).toHaveBeenCalledTimes(1);
+        expect(mocks.featureGating.assertLaunch).toHaveBeenCalledWith(
           fixtures.userId,
-        );
-        expect(mocks.creditMeter.assertBalance).toHaveBeenCalledWith(
-          fixtures.userId,
+          { withResearch: true },
         );
       },
     );
@@ -162,9 +167,9 @@ describe('ArtifactGenerationService', () => {
         withResearch: false,
       });
 
-      expect(mocks.featureGating.assertResearchAccess).not.toHaveBeenCalled();
-      expect(mocks.creditMeter.assertBalance).toHaveBeenCalledWith(
+      expect(mocks.featureGating.assertLaunch).toHaveBeenCalledWith(
         fixtures.userId,
+        { withResearch: false },
       );
     });
 
@@ -176,9 +181,9 @@ describe('ArtifactGenerationService', () => {
 
     it('should pre-check the balance before creating anything', async () => {
       const order: string[] = [];
-      mocks.creditMeter.assertBalance.mockImplementation(() => {
-        order.push('assertBalance');
-        return Promise.resolve();
+      mocks.featureGating.assertLaunch.mockImplementation(() => {
+        order.push('assertLaunch');
+        return Promise.resolve({});
       });
       mocks.artifactService.createArtifact.mockImplementation(() => {
         order.push('createArtifact');
@@ -187,12 +192,11 @@ describe('ArtifactGenerationService', () => {
 
       await service.launchInitialRun(fixtures.userId, fixtures.dto);
 
-      expect(order).toEqual(['assertBalance', 'createArtifact']);
-      expect(mocks.creditMeter.assertBalance).toHaveBeenCalledWith('user123');
+      expect(order).toEqual(['assertLaunch', 'createArtifact']);
     });
 
     it('should not create an artifact or enqueue when the balance check fails', async () => {
-      mocks.creditMeter.assertBalance.mockRejectedValue(
+      mocks.featureGating.assertLaunch.mockRejectedValue(
         new Error('FEATURE_LIMIT_EXCEEDED'),
       );
 
@@ -263,8 +267,7 @@ describe('ArtifactGenerationService', () => {
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
 
-      expect(mocks.featureGating.assertResearchAccess).not.toHaveBeenCalled();
-      expect(mocks.creditMeter.assertBalance).not.toHaveBeenCalled();
+      expect(mocks.featureGating.assertLaunch).not.toHaveBeenCalled();
       expect(mocks.artifactService.createArtifact).not.toHaveBeenCalled();
       expect(mocks.workflowQueue.addArtifactRunJob).not.toHaveBeenCalled();
     });
@@ -336,9 +339,9 @@ describe('ArtifactGenerationService', () => {
 
     it('should assert balance before appending the new version when launching a refine', async () => {
       const order: string[] = [];
-      mocks.creditMeter.assertBalance.mockImplementation(() => {
-        order.push('assertBalance');
-        return Promise.resolve();
+      mocks.featureGating.assertLaunch.mockImplementation(() => {
+        order.push('assertLaunch');
+        return Promise.resolve({});
       });
       mocks.artifactService.appendRefineVersion.mockImplementation(() => {
         order.push('appendRefineVersion');
@@ -356,8 +359,11 @@ describe('ArtifactGenerationService', () => {
         'Make the hook sharper',
       );
 
-      expect(order).toEqual(['assertBalance', 'appendRefineVersion']);
-      expect(mocks.creditMeter.assertBalance).toHaveBeenCalledWith('user123');
+      expect(order).toEqual(['assertLaunch', 'appendRefineVersion']);
+      // A refine reuses the run's research, so only the balance is gated.
+      expect(mocks.featureGating.assertLaunch).toHaveBeenCalledWith('user123', {
+        withResearch: false,
+      });
       expect(mocks.artifactService.appendRefineVersion).toHaveBeenCalledWith(
         'user123',
         'artifact123',
@@ -439,7 +445,7 @@ describe('ArtifactGenerationService', () => {
     });
 
     it('should not append or enqueue when the balance check fails for a refine', async () => {
-      mocks.creditMeter.assertBalance.mockRejectedValue(
+      mocks.featureGating.assertLaunch.mockRejectedValue(
         new Error('FEATURE_LIMIT_EXCEEDED'),
       );
 
@@ -450,6 +456,86 @@ describe('ArtifactGenerationService', () => {
       expect(mocks.artifactService.appendRefineVersion).not.toHaveBeenCalled();
       expect(mocks.workflowRunService.createRun).not.toHaveBeenCalled();
       expect(mocks.workflowQueue.addArtifactRunJob).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('gating reads', () => {
+    const userId = new Types.ObjectId().toString();
+
+    /**
+     * The real gate over counting model mocks: one `findOne`/`findById` is one
+     * database read. The tier cache starts cold, as on a fresh API process.
+     */
+    const makeGatedService = () => {
+      const paidTier = {
+        _id: new Types.ObjectId(),
+        name: 'Starter',
+        monthlyPrice: 9.99,
+        limits: { credits: 1000, research: 1 },
+      };
+      const subscriptionModel = {
+        findOne: jest.fn(() => ({
+          sort: () => ({
+            lean: () =>
+              Promise.resolve({
+                status: 'ACTIVE',
+                tierId: paidTier._id,
+                currentPeriodStart: new Date(Date.now() - 86_400_000),
+                currentPeriodEnd: new Date(Date.now() + 86_400_000),
+              }),
+          }),
+        })),
+      };
+      const tierModel = {
+        findById: jest.fn(() => ({ lean: () => Promise.resolve(paidTier) })),
+        findOne: jest.fn(),
+      };
+      const usageModel = {
+        findOne: jest.fn(() => ({ lean: () => Promise.resolve({ count: 1 }) })),
+      };
+      const gate = new FeatureGatingService(
+        subscriptionModel as never,
+        tierModel as never,
+        usageModel as never,
+        {} as never,
+        {} as never,
+        {},
+      );
+      const gated = makeService();
+      const service = new ArtifactGenerationService(
+        gated.mocks.artifactService as never,
+        gated.mocks.workflowRunService as never,
+        gate,
+        gated.mocks.workflowQueue as never,
+        gated.mocks.designSystems as never,
+      );
+      const reads = () =>
+        subscriptionModel.findOne.mock.calls.length +
+        tierModel.findById.mock.calls.length +
+        tierModel.findOne.mock.calls.length +
+        usageModel.findOne.mock.calls.length;
+      return { service, subscriptionModel, tierModel, usageModel, reads };
+    };
+
+    it('should make 3 gating reads for a research launch when the tier cache is cold', async () => {
+      const gated = makeGatedService();
+
+      await gated.service.launchInitialRun(userId, fixtures.dto);
+
+      expect(gated.subscriptionModel.findOne).toHaveBeenCalledTimes(1);
+      expect(gated.tierModel.findById).toHaveBeenCalledTimes(1);
+      expect(gated.usageModel.findOne).toHaveBeenCalledTimes(1);
+      expect(gated.reads()).toBe(3);
+    });
+
+    it('should make 2 gating reads for the next launch when the tier is cached', async () => {
+      const gated = makeGatedService();
+      await gated.service.launchInitialRun(userId, fixtures.dto);
+      const before = gated.reads();
+
+      await gated.service.launchRefineRun(userId, 'artifact123', 'Again');
+
+      expect(gated.reads() - before).toBe(2);
     });
   });
 });

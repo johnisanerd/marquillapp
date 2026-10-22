@@ -114,6 +114,18 @@ export type CompletionOptions = {
   reasoningEffort?: ReasoningEffort;
   /** Groups a run's calls for provider cache affinity. Unset sends nothing. */
   sessionId?: string;
+  /**
+   * Caps each try's timeout below the provider's configured one. Never
+   * raises it.
+   */
+  timeoutMs?: number;
+  /**
+   * Epoch milliseconds the call must not outlive: each try's timeout is cut
+   * to the time left, and no retry starts after it.
+   */
+  deadlineAt?: number;
+  /** Aborts the call. An abort is final: it is never retried. */
+  signal?: AbortSignal;
   responseSchema?: {
     name: string;
     schema: ZodType;

@@ -65,6 +65,11 @@ const DEFAULT_RESEARCH_MAX_STEPS = 5;
 const DEFAULT_RESEARCH_MAX_SUCCESSFUL_SEARCHES = 5;
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const DEFAULT_DOCUMENT_MAX_OUTPUT_TOKENS = 16384;
+/**
+ * A research turn is short (a tool choice, or the synthesis), so a hung one
+ * ends long before the provider's per-try timeout would end it.
+ */
+const RESEARCH_TURN_TIMEOUT_MS = 45_000;
 
 const describeError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -225,6 +230,7 @@ export class AgentRunnerService implements AgentRunner {
         model: this.researchModel,
         reasoningEffort: this.researchReasoningEffort,
         sessionId: input.sessionId,
+        turnTimeoutMs: RESEARCH_TURN_TIMEOUT_MS,
       },
       hooks,
     );
@@ -261,6 +267,7 @@ export class AgentRunnerService implements AgentRunner {
       model,
       reasoningEffort,
       sessionId,
+      turnTimeoutMs,
     } = config;
     // A label for the usage tag when the provider does not name the model that
     // answered; the request itself passes `model` through as-is, letting the
@@ -270,6 +277,7 @@ export class AgentRunnerService implements AgentRunner {
       model,
       max_tokens: this.researchMaxOutputTokens,
       ...callOptions(reasoningEffort, sessionId),
+      ...(turnTimeoutMs !== undefined ? { timeoutMs: turnTimeoutMs } : {}),
     };
     const toolDefinitions = tools.map(toToolDefinition);
 
@@ -470,6 +478,7 @@ export class AgentRunnerService implements AgentRunner {
         schema: documentDraftSchemaFor(input.includeTitle),
         maxEnvelopeRepairs: input.maxEnvelopeRepairs,
         sessionId: input.sessionId,
+        timeLeftMs: input.timeLeftMs,
       },
       hooks,
     );
@@ -512,6 +521,7 @@ export class AgentRunnerService implements AgentRunner {
         schema: documentRepairSchema,
         maxEnvelopeRepairs: input.maxEnvelopeRepairs,
         sessionId: input.sessionId,
+        timeLeftMs: input.timeLeftMs,
       },
       hooks,
     );
@@ -526,7 +536,8 @@ export class AgentRunnerService implements AgentRunner {
    *
    * An invalid envelope gets one Zod repair turn when the caller's Repair
    * budget allows it, and is final when it does not. That repair turn is
-   * part of the call it repairs, so it carries the same effort and session.
+   * part of the call it repairs, so it carries the same effort, session and
+   * deadline.
    */
   private async completeDocument<T>(
     call: 'draft' | 'Repair',
@@ -535,10 +546,12 @@ export class AgentRunnerService implements AgentRunner {
       schema,
       maxEnvelopeRepairs,
       sessionId,
+      timeLeftMs,
     }: {
       schema: ZodType<T>;
       maxEnvelopeRepairs: number;
       sessionId?: string;
+      timeLeftMs?: number;
     },
     hooks?: AgentHooks,
   ): Promise<{ parsed: T; envelopeRepairs: number }> {
@@ -551,6 +564,10 @@ export class AgentRunnerService implements AgentRunner {
           : this.documentRepairReasoningEffort,
         sessionId,
       ),
+      // Fixed once: the strategy cuts each try to min(timeout, time left).
+      ...(timeLeftMs !== undefined
+        ? { deadlineAt: Date.now() + timeLeftMs }
+        : {}),
     };
     const parse = (text: string): T =>
       this.parser.parseWithSchema(text, schema, {
@@ -719,7 +736,7 @@ export class AgentRunnerService implements AgentRunner {
       model: string;
       maxTokens?: number;
       call?: DocumentModelCall;
-    } & Pick<CompletionOptions, 'reasoningEffort' | 'sessionId'>,
+    } & Pick<CompletionOptions, 'reasoningEffort' | 'sessionId' | 'deadlineAt'>,
   ): Promise<{ text: string; finishReason?: string }> {
     const {
       text,
@@ -730,6 +747,9 @@ export class AgentRunnerService implements AgentRunner {
       model: options.model,
       max_tokens: options.maxTokens ?? this.generationMaxOutputTokens,
       ...callOptions(options.reasoningEffort, options.sessionId),
+      ...(options.deadlineAt !== undefined
+        ? { deadlineAt: options.deadlineAt }
+        : {}),
       ...(responseSchema
         ? {
             responseSchema: {

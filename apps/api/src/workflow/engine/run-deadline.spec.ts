@@ -53,4 +53,20 @@ describe('RunDeadline', () => {
       expect((error as WorkflowError).code).toBeUndefined();
     });
   });
+
+  describe('remainingMs', () => {
+    it('should report the time left when the deadline has not been reached', () => {
+      const deadline = RunDeadline.after(500, now);
+      clock = 1_200;
+
+      expect(deadline.remainingMs()).toBe(300);
+    });
+
+    it('should report zero when the deadline has passed', () => {
+      const deadline = RunDeadline.after(500, now);
+      clock = 1_700;
+
+      expect(deadline.remainingMs()).toBe(0);
+    });
+  });
 });

@@ -31,6 +31,11 @@ export interface AgentRunConfig extends SessionAffinity {
   model?: string;
   /** Sent on every turn and the closing call. Unset sends none. */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Caps each turn's (and the closing call's) per-try timeout below the
+   * provider's. Unset keeps the provider's.
+   */
+  turnTimeoutMs?: number;
 }
 
 /**
@@ -39,6 +44,14 @@ export interface AgentRunConfig extends SessionAffinity {
  */
 export interface SessionAffinity {
   sessionId?: string;
+}
+
+/**
+ * The run deadline's time left when a DOCUMENT call starts. The call, its
+ * retries and its envelope repair all end by then. Unset means no deadline.
+ */
+export interface RunTimeLeft {
+  timeLeftMs?: number;
 }
 
 /** One turn of the loop that asked for tools, plus what running them produced. */
@@ -92,7 +105,7 @@ export interface DocumentRefineInput {
 }
 
 /** A DOCUMENT draft (spec §7.5), INITIAL or REFINE. */
-export interface DocumentGenerateInput extends SessionAffinity {
+export interface DocumentGenerateInput extends SessionAffinity, RunTimeLeft {
   prompt: string;
   stylePreset?: StylePreset;
   research?: ResearchResult;
@@ -114,7 +127,7 @@ export interface DocumentGenerateInput extends SessionAffinity {
  * One static or render Repair (spec §7.2). The system message is the draft's,
  * so `fragment` and `includeTitle` must be the draft's too.
  */
-export interface DocumentRepairInput extends SessionAffinity {
+export interface DocumentRepairInput extends SessionAffinity, RunTimeLeft {
   fragment: string;
   includeTitle: boolean;
   /** The Candidate Source the violations were found in. */

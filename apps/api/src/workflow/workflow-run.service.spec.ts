@@ -252,15 +252,61 @@ describe('WorkflowRunService', () => {
       expect(service.handleFor(fixtures.runId).runId).toBe(fixtures.runId);
     });
 
-    it('should persist the research context so a later refine reuses it', async () => {
+    it('should persist the research context and its usage when research completes', async () => {
       const research = { findings: 'f', sources: [] };
+      const usage = [{ kind: 'web_search' as const, amount: 1 }];
 
-      await service.handleFor(fixtures.runId).saveResearchContext(research);
+      await service
+        .handleFor(fixtures.runId)
+        .saveResearchContext(research, usage);
 
       expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(
         { _id: expect.any(Types.ObjectId) },
-        { $set: { researchContext: research } },
+        { $set: { researchContext: research, researchUsage: usage } },
       );
+    });
+
+    describe('readResearchContext', () => {
+      const stubStored = (stored: unknown) => {
+        const exec = jest.fn().mockResolvedValue(stored);
+        const lean = jest.fn().mockReturnValue({ exec });
+        const select = jest.fn().mockReturnValue({ lean });
+        mocks.workflowRunModel.findById.mockReturnValue({ select });
+        return { select };
+      };
+
+      it('should read only the research and its usage when loading the saved research', async () => {
+        const research = { findings: 'f', sources: [] };
+        const usage = [{ kind: 'web_search' as const, amount: 1 }];
+        const { select } = stubStored({
+          researchContext: research,
+          researchUsage: usage,
+        });
+
+        await expect(
+          service.handleFor(fixtures.runId).readResearchContext(),
+        ).resolves.toEqual({ research, usage });
+        expect(select).toHaveBeenCalledWith({
+          researchContext: 1,
+          researchUsage: 1,
+        });
+      });
+
+      it('should return undefined when the run has no saved research', async () => {
+        stubStored({});
+
+        await expect(
+          service.handleFor(fixtures.runId).readResearchContext(),
+        ).resolves.toBeUndefined();
+      });
+
+      it('should return undefined when research was saved before its usage was', async () => {
+        stubStored({ researchContext: { findings: 'f', sources: [] } });
+
+        await expect(
+          service.handleFor(fixtures.runId).readResearchContext(),
+        ).resolves.toBeUndefined();
+      });
     });
 
     it('should append auditable Browserless attempts without overwriting retries', async () => {
@@ -509,13 +555,15 @@ describe('WorkflowRunService', () => {
       );
     });
 
-    it('should mark the run FAILED with the code and reason', async () => {
-      await service
-        .handleFor(fixtures.runId)
-        .fail(FailureCode.INTERNAL, 'insufficient credits');
+    it('should mark the run FAILED with the code and reason when it is still RUNNING', async () => {
+      await expect(
+        service
+          .handleFor(fixtures.runId)
+          .fail(FailureCode.INTERNAL, 'insufficient credits'),
+      ).resolves.toBe('FAILED');
 
       expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(
-        { _id: expect.any(Types.ObjectId) },
+        { _id: expect.any(Types.ObjectId), status: RunStatus.RUNNING },
         {
           $set: {
             status: RunStatus.FAILED,
@@ -524,6 +572,16 @@ describe('WorkflowRunService', () => {
           },
         },
       );
+    });
+
+    it('should report ALREADY_ENDED and leave the run when it is no longer RUNNING', async () => {
+      mocks.workflowRunModel.updateOne.mockResolvedValue({ matchedCount: 0 });
+
+      await expect(
+        service
+          .handleFor(fixtures.runId)
+          .fail(FailureCode.INTERNAL, 'job stalled more than allowable limit'),
+      ).resolves.toBe('ALREADY_ENDED');
     });
 
     it("should write the job attempt's summed LLM usage with its completion, in one update", async () => {
@@ -578,22 +636,25 @@ describe('WorkflowRunService', () => {
       await run.fail(FailureCode.INTERNAL, 'the model is down');
 
       expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledTimes(1);
-      expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(byRunId, {
-        $set: {
-          status: RunStatus.FAILED,
-          failureCode: 'internal',
-          failureReason: 'the model is down',
-          llmUsage: {
-            calls: 1,
-            promptTokens: 1200,
-            completionTokens: 800,
-            reasoningTokens: 0,
-            cachedTokens: 0,
-            cacheWriteTokens: 0,
-            llmMs: 0,
+      expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(
+        { ...byRunId, status: RunStatus.RUNNING },
+        {
+          $set: {
+            status: RunStatus.FAILED,
+            failureCode: 'internal',
+            failureReason: 'the model is down',
+            llmUsage: {
+              calls: 1,
+              promptTokens: 1200,
+              completionTokens: 800,
+              reasoningTokens: 0,
+              cachedTokens: 0,
+              cacheWriteTokens: 0,
+              llmMs: 0,
+            },
           },
         },
-      });
+      );
     });
 
     it('should not tally model calls recorded on another handle for the same run', async () => {

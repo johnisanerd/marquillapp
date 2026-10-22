@@ -1,14 +1,18 @@
 import { InternalServerErrorException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { z } from 'zod';
 import { LLMError } from '../errors';
 import { LLMMessage, MessageRole, ToolDefinition } from '../interfaces';
 
 const send = jest.fn();
+const OpenRouterClient = jest.fn<{ chat: { send: jest.Mock } }, [unknown]>(
+  () => ({ chat: { send } }),
+);
 
 jest.mock(
   '@openrouter/sdk',
   () => ({
-    OpenRouter: jest.fn().mockImplementation(() => ({ chat: { send } })),
+    OpenRouter: jest.fn((options: unknown) => OpenRouterClient(options)),
   }),
   { virtual: true },
 );
@@ -22,9 +26,13 @@ const usage = {
   cost: 0.00042,
 };
 
-const makeStrategy = () => {
-  const configService = { get: jest.fn(() => 'test-api-key') };
-  const strategy = new OpenRouterStrategy(configService as any);
+const makeStrategy = (env: Record<string, string> = {}) => {
+  const values: Record<string, string> = {
+    OPENROUTER_API_KEY: 'test-api-key',
+    ...env,
+  };
+  const configService = new ConfigService(values);
+  const strategy = new OpenRouterStrategy(configService);
   return { strategy, mocks: { configService, send } };
 };
 
@@ -58,6 +66,8 @@ let strategy: OpenRouterStrategy;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // A test that gives up early leaves its queued answers behind.
+  send.mockReset();
   // Frozen, so a call's measured latency is 0 unless a test advances the clock.
   jest.useFakeTimers();
   ({ strategy } = makeStrategy());
@@ -73,6 +83,22 @@ describe('OpenRouterStrategy', () => {
       expect(() => new OpenRouterStrategy(configService as any)).toThrow(
         InternalServerErrorException,
       );
+    });
+
+    it("should turn the SDK's own retries off when the client is built", () => {
+      expect(OpenRouterClient).toHaveBeenCalledWith(
+        expect.objectContaining({ retryConfig: { strategy: 'none' } }),
+      );
+    });
+
+    it.each([
+      ['OPENROUTER_TIMEOUT_MS', '0'],
+      ['OPENROUTER_MAX_ATTEMPTS', '0'],
+      ['OPENROUTER_RETRY_BASE_MS', '-1'],
+      ['OPENROUTER_RETRY_MAX_DELAY_MS', '1.5'],
+      ['OPENROUTER_RETRY_BUDGET_MS', 'soon'],
+    ])('should throw naming %s when it is %p', (key, value) => {
+      expect(() => makeStrategy({ [key]: value })).toThrow(key);
     });
   });
 
@@ -672,7 +698,8 @@ describe('OpenRouterStrategy', () => {
   });
 
   describe('error classification', () => {
-    it('should surface a 429 as a retryable LLMError', async () => {
+    it('should surface a 429 as a retryable LLMError when no try is left', async () => {
+      ({ strategy } = makeStrategy({ OPENROUTER_MAX_ATTEMPTS: '1' }));
       send.mockRejectedValue(
         Object.assign(new Error('Rate limit exceeded'), { statusCode: 429 }),
       );
@@ -832,6 +859,290 @@ describe('OpenRouterStrategy', () => {
 
       expect(completed).not.toHaveProperty('model');
       expect(turn).not.toHaveProperty('model');
+    });
+  });
+
+  describe('retries', () => {
+    const user: LLMMessage[] = [{ role: MessageRole.User, content: 'hi' }];
+    const ok = { choices: [{ message: { content: 'hello' } }], usage };
+    const httpError = (statusCode: number, headers?: Record<string, string>) =>
+      Object.assign(new Error(`status ${statusCode}`), {
+        statusCode,
+        ...(headers ? { headers: new Headers(headers) } : {}),
+      });
+    /** A call that never answers, and rejects as fetch does once its signal aborts. */
+    const hang = (_request: unknown, { signal }: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason as Error));
+      });
+    /** The settled outcome, without an unhandled rejection while timers run. */
+    const settle = <T>(
+      promise: Promise<T>,
+    ): Promise<{ value?: T; error?: unknown }> =>
+      promise.then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      );
+
+    let random: jest.SpyInstance;
+
+    beforeEach(() => {
+      random = jest.spyOn(Math, 'random').mockReturnValue(0.5);
+    });
+
+    afterEach(() => random.mockRestore());
+
+    it('should pass an abort signal to the SDK when making each try', async () => {
+      send.mockResolvedValue(ok);
+
+      await strategy.complete(user);
+
+      const [, requestOptions] = send.mock.calls[0] as [
+        unknown,
+        { signal: AbortSignal },
+      ];
+      expect(requestOptions.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('should retry after full jitter and return the answer when a 502 is followed by a success', async () => {
+      send.mockRejectedValueOnce(httpError(502)).mockResolvedValueOnce(ok);
+
+      const outcome = settle(strategy.complete(user));
+      // Full jitter on the first retry: 0.5 * min(15000, 1000 * 2^0) = 500.
+      await jest.advanceTimersByTimeAsync(499);
+      expect(send).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+
+      expect((await outcome).value).toMatchObject({ text: 'hello' });
+      expect(send).toHaveBeenCalledTimes(2);
+    });
+
+    it('should double the jitter ceiling and cap it at the max delay when tries keep failing', async () => {
+      ({ strategy } = makeStrategy({
+        OPENROUTER_MAX_ATTEMPTS: '4',
+        OPENROUTER_RETRY_MAX_DELAY_MS: '1500',
+      }));
+      random.mockReturnValue(1);
+      send
+        .mockRejectedValueOnce(httpError(503))
+        .mockRejectedValueOnce(httpError(503))
+        .mockRejectedValueOnce(httpError(503))
+        .mockResolvedValueOnce(ok);
+
+      const outcome = settle(strategy.complete(user));
+      await jest.advanceTimersByTimeAsync(1000);
+      expect(send).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(1500);
+      expect(send).toHaveBeenCalledTimes(3);
+      await jest.advanceTimersByTimeAsync(1500);
+
+      await expect(outcome).resolves.toHaveProperty('value');
+      expect(send).toHaveBeenCalledTimes(4);
+    });
+
+    it('should wait for Retry-After instead of the jitter when a 429 sends one', async () => {
+      send
+        .mockRejectedValueOnce(httpError(429, { 'retry-after': '3' }))
+        .mockResolvedValueOnce(ok);
+
+      const outcome = settle(strategy.complete(user));
+      await jest.advanceTimersByTimeAsync(2_999);
+      expect(send).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+
+      await expect(outcome).resolves.toHaveProperty('value');
+      expect(send).toHaveBeenCalledTimes(2);
+    });
+
+    it('should retry when a provider error arrives after 200 OK', async () => {
+      send
+        .mockRejectedValueOnce(
+          Object.assign(new Error('Response validation failed'), {
+            name: 'ResponseValidationError',
+            statusCode: 200,
+            rawValue: { error: { code: 502, message: 'Upstream died' } },
+          }),
+        )
+        .mockResolvedValueOnce(ok);
+
+      const outcome = settle(strategy.complete(user));
+      await jest.runAllTimersAsync();
+
+      await expect(outcome).resolves.toHaveProperty('value');
+      expect(send).toHaveBeenCalledTimes(2);
+    });
+
+    it('should throw the last retryable error when every try fails', async () => {
+      send.mockRejectedValue(httpError(503));
+
+      const outcome = settle(strategy.complete(user));
+      await jest.runAllTimersAsync();
+
+      expect(send).toHaveBeenCalledTimes(3);
+      expect((await outcome).error).toMatchObject({
+        name: 'LLMError',
+        retryable: true,
+        statusCode: 503,
+      });
+    });
+
+    it('should try exactly once and never sleep when OPENROUTER_MAX_ATTEMPTS is 1', async () => {
+      ({ strategy } = makeStrategy({
+        OPENROUTER_MAX_ATTEMPTS: '1',
+        OPENROUTER_TIMEOUT_MS: '3600000',
+      }));
+      send.mockRejectedValue(httpError(503));
+
+      const error = await strategy.complete(user).catch((e: unknown) => e);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(error).toMatchObject({ retryable: true, statusCode: 503 });
+      expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('should not retry when the error is terminal', async () => {
+      send.mockRejectedValue(httpError(401));
+
+      const error = await strategy.complete(user).catch((e: unknown) => e);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(error).toMatchObject({ retryable: false, statusCode: 401 });
+    });
+
+    it('should give up without sleeping when Retry-After is longer than the retry budget', async () => {
+      send
+        .mockRejectedValueOnce(httpError(429, { 'retry-after': '60' }))
+        .mockResolvedValueOnce(ok);
+
+      const error = await strategy.complete(user).catch((e: unknown) => e);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(error).toMatchObject({ retryable: true, statusCode: 429 });
+    });
+
+    it('should give up when the sleeps so far and the next one would exceed the retry budget', async () => {
+      ({ strategy } = makeStrategy({
+        OPENROUTER_MAX_ATTEMPTS: '5',
+        OPENROUTER_RETRY_BUDGET_MS: '2000',
+      }));
+      random.mockReturnValue(0.9);
+      // Sleeps 900, then 1800: 2700 would pass the 2000 budget.
+      send.mockRejectedValue(httpError(502));
+
+      const outcome = settle(strategy.complete(user));
+      await jest.runAllTimersAsync();
+
+      expect(send).toHaveBeenCalledTimes(2);
+      expect((await outcome).error).toMatchObject({ statusCode: 502 });
+    });
+
+    it('should give up when the sleep would end past the caller deadline', async () => {
+      send
+        .mockRejectedValueOnce(httpError(429, { 'retry-after': '2' }))
+        .mockResolvedValueOnce(ok);
+
+      const error = await strategy
+        .complete(user, { deadlineAt: Date.now() + 1_500 })
+        .catch((e: unknown) => e);
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(error).toMatchObject({ statusCode: 429 });
+    });
+
+    it('should end the call at the per-try timeout and run the next try when a call hangs', async () => {
+      send.mockImplementationOnce(hang).mockResolvedValueOnce(ok);
+
+      const outcome = settle(strategy.complete(user));
+      await jest.advanceTimersByTimeAsync(239_999);
+      expect(send).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+      const [, firstTry] = send.mock.calls[0] as [
+        unknown,
+        { signal: AbortSignal },
+      ];
+      expect(firstTry.signal.aborted).toBe(true);
+      await jest.advanceTimersByTimeAsync(500);
+
+      await expect(outcome).resolves.toHaveProperty('value');
+      expect(send).toHaveBeenCalledTimes(2);
+    });
+
+    it("should use the call's timeout when it is shorter than OPENROUTER_TIMEOUT_MS", async () => {
+      ({ strategy } = makeStrategy({ OPENROUTER_MAX_ATTEMPTS: '1' }));
+      send.mockImplementationOnce(hang);
+
+      const outcome = settle(strategy.complete(user, { timeoutMs: 45_000 }));
+      await jest.advanceTimersByTimeAsync(45_000);
+
+      expect((await outcome).error).toMatchObject({
+        name: 'LLMError',
+        retryable: true,
+      });
+    });
+
+    it('should cut the per-try timeout to the time left when the deadline is nearer', async () => {
+      ({ strategy } = makeStrategy({ OPENROUTER_MAX_ATTEMPTS: '1' }));
+      send.mockImplementationOnce(hang);
+
+      const outcome = settle(
+        strategy.complete(user, { deadlineAt: Date.now() + 5_000 }),
+      );
+      await jest.advanceTimersByTimeAsync(5_000);
+
+      expect((await outcome).error).toMatchObject({ retryable: true });
+    });
+
+    it('should not call the provider when the deadline has already passed', async () => {
+      const error = await strategy
+        .complete(user, { deadlineAt: Date.now() })
+        .catch((e: unknown) => e);
+
+      expect(send).not.toHaveBeenCalled();
+      expect(error).toMatchObject({ name: 'LLMError', retryable: true });
+    });
+
+    it('should not retry when the caller aborts the call', async () => {
+      const controller = new AbortController();
+      send.mockImplementationOnce(hang).mockResolvedValueOnce(ok);
+
+      const outcome = settle(
+        strategy.complete(user, { signal: controller.signal }),
+      );
+      await jest.advanceTimersByTimeAsync(10);
+      controller.abort();
+      await jest.runAllTimersAsync();
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect((await outcome).error).toMatchObject({
+        name: 'LLMError',
+        retryable: false,
+      });
+    });
+
+    it('should stop sleeping and not retry when the caller aborts between tries', async () => {
+      const controller = new AbortController();
+      send.mockRejectedValueOnce(httpError(502)).mockResolvedValueOnce(ok);
+
+      const outcome = settle(
+        strategy.complete(user, { signal: controller.signal }),
+      );
+      await jest.advanceTimersByTimeAsync(100);
+      controller.abort();
+      await jest.runAllTimersAsync();
+
+      expect(send).toHaveBeenCalledTimes(1);
+      expect((await outcome).error).toMatchObject({ retryable: false });
+    });
+
+    it('should retry when completeWithTools fails with a retryable error', async () => {
+      send
+        .mockRejectedValueOnce(httpError(502))
+        .mockResolvedValueOnce({ choices: [{ message: { content: 'done' } }] });
+
+      const outcome = settle(strategy.completeWithTools(user, []));
+      await jest.runAllTimersAsync();
+
+      expect((await outcome).value).toMatchObject({ text: 'done' });
     });
   });
 });

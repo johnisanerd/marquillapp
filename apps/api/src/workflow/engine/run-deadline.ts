@@ -23,6 +23,14 @@ export class RunDeadline implements RunDeadlineGuard {
   }
 
   /**
+   * Milliseconds until the deadline, never negative. A model call uses it to
+   * bound its own timeout and retries, so it cannot outlive the attempt.
+   */
+  remainingMs(): number {
+    return Math.max(0, this.endsAt - this.now());
+  }
+
+  /**
    * Throws **transient** once the deadline has passed. If that ends the run,
    * its code follows the step: `render.unavailable` in `RENDER_PDF`,
    * `internal` elsewhere.

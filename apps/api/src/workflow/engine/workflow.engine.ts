@@ -191,12 +191,19 @@ export const ARTIFACT_DELETED_FAILURE_REASON =
  * An artifact the user deleted mid-run fails its run silently, as `internal`:
  * the client that deleted it is not waiting for the result.
  *
- * Returns the code the run was failed with.
+ * Idempotent: a run that is no longer `RUNNING` already ended, through an
+ * earlier call for the same job (the worker's `failed` event and the
+ * stalled-job listener can both report one) or a completion. It is left as it
+ * is and nothing is emitted. The run's conditional write decides the race, so
+ * this holds across processes.
+ *
+ * Returns the code the run was failed with, or `null` when it had already
+ * ended.
  */
 export async function handleTerminalFailure(
   { artifacts, run, emitter, logger }: TerminalFailureDeps,
   { artifactId, version, failureCode, failureReason }: TerminalFailure,
-): Promise<FailureCode> {
+): Promise<FailureCode | null> {
   const report = (what: string, error: unknown): void =>
     logger.error(
       `Terminal-failure handler could not ${what} for artifact ${artifactId} v${version}: ${describeError(error)}`,
@@ -215,12 +222,21 @@ export async function handleTerminalFailure(
     report('mark the version FAILED', error);
   }
 
+  let alreadyEnded = false;
   try {
-    await (deleted
+    const outcome = await (deleted
       ? run.fail(FailureCode.INTERNAL, ARTIFACT_DELETED_FAILURE_REASON)
       : run.fail(failureCode, failureReason));
+    alreadyEnded = outcome === 'ALREADY_ENDED';
   } catch (error: unknown) {
     report('mark the run FAILED', error);
+  }
+
+  if (alreadyEnded) {
+    logger.log(
+      `Run for artifact ${artifactId} v${version} had already ended; not failing it again`,
+    );
+    return null;
   }
 
   if (deleted) {

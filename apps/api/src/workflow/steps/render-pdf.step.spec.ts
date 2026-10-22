@@ -56,7 +56,10 @@ const makeStep = () => {
     saveAcceptedCandidate: jest.fn().mockResolvedValue(undefined),
     recordModelCall: jest.fn(),
   };
-  const deadline = { assertTimeLeft: jest.fn() };
+  const deadline = {
+    assertTimeLeft: jest.fn(),
+    remainingMs: jest.fn(() => 120_000),
+  };
   const meter = { record: jest.fn() };
   const emit = jest.fn();
   const logger = { error: jest.fn(), warn: jest.fn() };
@@ -362,6 +365,7 @@ describe('renderPdfStep', () => {
         violations: { violations: [SAFE_AREA], omitted: [] },
         maxEnvelopeRepairs: 1,
         sessionId: 'run-1',
+        timeLeftMs: 120_000,
       });
       expect(hooks.onUsage).toBeInstanceOf(Function);
     });

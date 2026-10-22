@@ -2,7 +2,6 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { ArtifactType, RunKind } from 'src/database/schemas';
 import { DEFAULT_DESIGN_SYSTEM_ID } from '../design-system/design-system.constants';
 import { DesignSystemsService } from '../design-system/design-systems.service';
-import { CreditMeterService } from 'src/feature-gating/credit-meter.service';
 import { FeatureGatingService } from 'src/feature-gating/feature-gating.service';
 import { WorkflowRunService } from 'src/workflow/workflow-run.service';
 import { WorkflowQueue } from 'src/workflow/workflow.queue';
@@ -33,7 +32,6 @@ export class ArtifactGenerationService {
   constructor(
     private readonly artifactService: ArtifactService,
     private readonly workflowRunService: WorkflowRunService,
-    private readonly creditMeter: CreditMeterService,
     private readonly featureGating: FeatureGatingService,
     private readonly workflowQueue: WorkflowQueue,
     private readonly designSystems: DesignSystemsService,
@@ -47,13 +45,12 @@ export class ArtifactGenerationService {
     // unlisted slug is a 400.
     const designSystem = this.pinDesignSystem(input);
 
-    if (input.withResearch) {
-      await this.featureGating.assertResearchAccess(userId);
-    }
-
-    // Pre-check the headroom so an out-of-credits user gets a fast 403 rather
-    // than a queued run that fails after doing work.
-    await this.creditMeter.assertBalance(userId);
+    // Pre-check research access and the headroom on one entitlement, so an
+    // out-of-credits user gets a fast 403 rather than a queued run that fails
+    // after doing work.
+    await this.featureGating.assertLaunch(userId, {
+      withResearch: input.withResearch,
+    });
 
     const artifact = await this.artifactService.createArtifact(userId, input);
     const artifactId = artifact._id.toString();
@@ -88,7 +85,8 @@ export class ArtifactGenerationService {
     feedback: string,
     designSystemId?: string,
   ): Promise<RefineLaunchResult> {
-    await this.creditMeter.assertBalance(userId);
+    // A refine reuses the run's research, so only the headroom is gated.
+    await this.featureGating.assertLaunch(userId, { withResearch: false });
 
     // A DOCUMENT's pin is decided in the same call, before the Attempt is
     // appended: an unavailable pin or an unselectable switch appends nothing.

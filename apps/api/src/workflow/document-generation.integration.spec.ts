@@ -215,6 +215,7 @@ const makeRun = () => {
     }),
     readAcceptedCandidate: jest.fn(() => Promise.resolve(accepted)),
     saveResearchContext: jest.fn().mockResolvedValue(undefined),
+    readResearchContext: jest.fn().mockResolvedValue(undefined),
     recordRenderAttempt: jest
       .fn<Promise<void>, [RenderAttemptUsage]>()
       .mockResolvedValue(undefined),
@@ -251,7 +252,10 @@ const makeRun = () => {
     renderer: renderer as never,
     objects,
     creditMeter: creditMeter as never,
-    featureGating: { assertResearchAccess: jest.fn() } as never,
+    featureGating: {
+      resolveEntitlement: jest.fn().mockResolvedValue(undefined),
+      assertResearchAccess: jest.fn(),
+    } as never,
     runs: { handleFor: jest.fn().mockReturnValue(runHandle) } as never,
     redis: redis as never,
     logger,

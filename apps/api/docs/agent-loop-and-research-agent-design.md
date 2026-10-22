@@ -262,7 +262,7 @@ BullMQ `attempts:3`; terminal → `UnrecoverableError`):
 |---|---|---|
 | **Tool execution error** (Tavily down / timeout / throws) | caught, returned to the model as tool-result `{ error }`; loop continues (agent adapts, bounded by `maxSteps`) | none — absorbed in-loop |
 | **LLM transport error** (429 / 5xx / network) | `src/llm` classifies and throws typed `LLMError{ retryable }` (429/5xx/network = retryable; 4xx/auth = terminal); `AgentRunner` propagates | step maps to `WorkflowError{retryable}` → whole run retried, or terminal |
-| **Bad structured output** (generation fails #97 Zod) | **one inline repair retry** in `generate()` (re-prompt with the validation error); still invalid → throw `retryable` | #98 `attempts` re-runs (research cached, so cheap) |
+| **Bad structured output** (generation fails #97 Zod) | **one inline repair retry** in `generate()` (re-prompt with the validation error); still invalid → throw `retryable` | #98 `attempts` re-runs (a job retry reuses the saved research with no model or search call, and is billed for it again) |
 
 - The `src/llm` layer owns retryable classification because it knows provider error
   semantics.

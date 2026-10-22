@@ -1,7 +1,11 @@
-import { USAGE_KINDS } from '../../feature-gating/credit-meter.constants';
+import {
+  USAGE_KINDS,
+  type UsageRecord,
+} from '../../feature-gating/credit-meter.constants';
 import { WorkflowStep } from '../workflow.constants';
 import { RunEventType } from '../engine/run-event.types';
-import type { StepHandler } from '../engine/workflow.types';
+import type { ResearchResult } from '../../agent/agent-runner.interface';
+import type { StepContext, StepHandler } from '../engine/workflow.types';
 
 /**
  * The optional research turn, run only for `withResearch && kind === INITIAL`
@@ -18,32 +22,58 @@ import type { StepHandler } from '../engine/workflow.types';
  * record, which is what lets a later refine reuse the findings with zero
  * re-search. Tool errors are absorbed inside the loop; only an LLM transport
  * fault surfaces here, and `src/llm` has already classified it for the engine.
+ *
+ * A job retry after this step finished does not search again: the saved
+ * research and the usage it recorded are read back, the usage is re-recorded
+ * through the same meter, and the run bills like one that never retried.
  */
 export const researchStep: StepHandler = async (state, ctx) => {
+  const saved = await ctx.run.readResearchContext();
+
+  if (saved) {
+    // Same records through the same meter, so the retry's credits match the
+    // original's, including each record's own rounding.
+    for (const usage of saved.usage) ctx.meter.record(usage);
+
+    emitSourcesFound(ctx, saved.research);
+    return { research: saved.research };
+  }
+
   const { prompt, type, stylePreset } = state.input;
+  const usage: UsageRecord[] = [];
+  const record = (entry: UsageRecord) => {
+    usage.push(entry);
+    ctx.meter.record(entry);
+  };
 
   const research = await ctx.agent.research(
     // The run id groups the run's calls for provider cache affinity.
     { prompt, type, stylePreset, sessionId: ctx.run.runId },
     {
-      onUsage: (usage) => {
-        ctx.meter.record({
+      onUsage: (turn) => {
+        record({
           kind: USAGE_KINDS.LLM,
-          amount: usage.cost,
-          detail: { model: usage.model, totalTokens: usage.totalTokens },
+          amount: turn.cost,
+          detail: { model: turn.model, totalTokens: turn.totalTokens },
         });
-        ctx.run.recordModelCall(usage);
+        ctx.run.recordModelCall(turn);
       },
-      onToolCall: () =>
-        ctx.meter.record({ kind: USAGE_KINDS.WEB_SEARCH, amount: 1 }),
+      onToolCall: () => record({ kind: USAGE_KINDS.WEB_SEARCH, amount: 1 }),
     },
   );
 
-  // Refine reads this from the run record instead of re-searching (§5).
-  await ctx.run.saveResearchContext(research);
+  // Refine reads the research from the run record instead of re-searching (§5);
+  // a job retry reads it with the usage to bill it again.
+  await ctx.run.saveResearchContext(research, usage);
 
-  // Best-effort progress signal; the core's step.started/completed still bracket
-  // the step whether or not this fires (R7 keeps step.progress optional).
+  emitSourcesFound(ctx, research);
+
+  return { research };
+};
+
+// Best-effort progress signal; the core's step.started/completed still bracket
+// the step whether or not this fires (R7 keeps step.progress optional).
+const emitSourcesFound = (ctx: StepContext, research: ResearchResult) =>
   ctx.emit({
     type: RunEventType.STEP_PROGRESS,
     data: {
@@ -51,6 +81,3 @@ export const researchStep: StepHandler = async (state, ctx) => {
       sourcesFound: research.sources.length,
     },
   });
-
-  return { research };
-};
