@@ -288,6 +288,61 @@ describe('renderPdfStep', () => {
     });
   });
 
+  describe('uploads', () => {
+    it('should start the PDF and cover uploads together', async () => {
+      let releasePdf: () => void = () => undefined;
+      mocks.objects.put.mockImplementation((key: string) =>
+        key.endsWith('document.pdf')
+          ? new Promise<void>((resolve) => {
+              releasePdf = resolve;
+            })
+          : Promise.resolve(),
+      );
+
+      const done = renderPdfStep(fixtures.state, ctx);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const keys = mocks.objects.put.mock.calls.map(([key]) => key as string);
+      expect(keys).toContain('artifacts/artifact-1/3/document.pdf');
+      expect(keys).toContain('artifacts/artifact-1/3/cover.png');
+      releasePdf();
+      const patch = await done;
+      expect(patch.document?.coverKey).toBe('artifacts/artifact-1/3/cover.png');
+    });
+
+    it('should report a cover failure and still land the PDF when the cover fails while the PDF upload is pending', async () => {
+      let releasePdf: () => void = () => undefined;
+      let pdfLanded = false;
+      mocks.objects.put.mockImplementation((key: string) =>
+        key.endsWith('cover.png')
+          ? Promise.reject(new Error('R2 503'))
+          : key.endsWith('document.pdf')
+            ? new Promise<void>((resolve) => {
+                releasePdf = () => {
+                  pdfLanded = true;
+                  resolve();
+                };
+              })
+            : Promise.resolve(),
+      );
+
+      const done = renderPdfStep(fixtures.state, ctx);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(pdfLanded).toBe(false);
+      releasePdf();
+      const patch = await done;
+
+      expect(pdfLanded).toBe(true);
+      expect(patch.document?.pdfKey).toBe(
+        'artifacts/artifact-1/3/document.pdf',
+      );
+      expect(patch.document?.coverKey).toBeUndefined();
+      expect(mocks.run.recordRenderAttempt).toHaveBeenCalledWith(
+        expect.objectContaining({ coverFailure: 'upload failed: R2 503' }),
+      );
+    });
+  });
+
   describe('on repair findings', () => {
     beforeEach(() => {
       mockedJudge.mockReturnValueOnce([SAFE_AREA]);

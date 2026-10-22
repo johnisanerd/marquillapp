@@ -394,24 +394,30 @@ async function publish(
     Buffer.from(documentSource, 'utf8'),
     HTML_MIME_TYPE,
   );
-  await ctx.objects.put(pdfKey, Buffer.from(pdf), PDF_MIME_TYPE);
-
-  let coverKey: string | undefined;
-  let coverFailure: string | undefined;
-  if (session.cover.ok) {
+  // The PDF and the cover upload together. The cover keeps its own catch, so
+  // its failure is reported as `coverFailure` and never fails the PDF.
+  const uploadCover = async (): Promise<{
+    coverKey?: string;
+    coverFailure?: string;
+  }> => {
+    if (!session.cover.ok) return { coverFailure: session.cover.reason };
     try {
       await ctx.objects.put(
         keyOf('cover.png'),
         Buffer.from(session.cover.png),
         PNG_MIME_TYPE,
       );
-      coverKey = keyOf('cover.png');
+      return { coverKey: keyOf('cover.png') };
     } catch (error: unknown) {
-      coverFailure = `upload failed: ${error instanceof Error ? error.message : String(error)}`;
+      return {
+        coverFailure: `upload failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
     }
-  } else {
-    coverFailure = session.cover.reason;
-  }
+  };
+  const [, { coverKey, coverFailure }] = await Promise.all([
+    ctx.objects.put(pdfKey, Buffer.from(pdf), PDF_MIME_TYPE),
+    uploadCover(),
+  ]);
   if (coverFailure !== undefined) {
     ctx.logger.warn(
       `cover.png missing for artifact ${artifactId} v${version}: ${coverFailure}`,
