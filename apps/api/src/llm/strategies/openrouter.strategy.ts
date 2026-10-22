@@ -1,4 +1,8 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OpenRouter } from '@openrouter/sdk';
 import type {
@@ -20,6 +24,12 @@ import {
   Usage,
 } from '../interfaces';
 import { LLMError, toLLMError } from '../errors';
+import {
+  jitterMs,
+  readRetryPolicy,
+  sleep,
+  type RetryPolicy,
+} from './openrouter-retry';
 
 const DEFAULT_MODEL = 'openai/gpt-5-mini';
 
@@ -202,7 +212,9 @@ const reportedModel = (result: ChatResult): { model?: string } =>
 
 @Injectable()
 export class OpenRouterStrategy implements LLMStrategy {
+  private readonly logger = new Logger(OpenRouterStrategy.name);
   private client: OpenRouter;
+  private readonly retry: RetryPolicy;
 
   constructor(private config: ConfigService) {
     const apiKey = this.config.get<string>('OPENROUTER_API_KEY');
@@ -210,8 +222,13 @@ export class OpenRouterStrategy implements LLMStrategy {
       throw new InternalServerErrorException(
         'OPENROUTER_API_KEY was not configured',
       );
+    // A bad OPENROUTER_* retry key throws here, which fails boot.
+    this.retry = readRetryPolicy(this.config);
+    // The SDK's retry loop shares one timeout across every try and skips 429s;
+    // `send` retries instead.
     this.client = new OpenRouter({
       apiKey,
+      retryConfig: { strategy: 'none' },
     });
   }
 
@@ -327,12 +344,117 @@ export class OpenRouterStrategy implements LLMStrategy {
       stream: false as const,
     };
 
-    const startedAt = Date.now();
-    try {
-      const result = await this.client.chat.send({ chatRequest });
-      return { result, latencyMs: Date.now() - startedAt };
-    } catch (error) {
-      throw toLLMError(error);
+    return this.sendWithRetries(
+      (signal) => this.client.chat.send({ chatRequest }, { signal }),
+      options,
+    );
+  }
+
+  /**
+   * The app-owned retry loop. Each try gets a signal that aborts at the
+   * per-try timeout, `min(OPENROUTER_TIMEOUT_MS, options.timeoutMs, time left
+   * before options.deadlineAt)`, or when the caller's signal does. A retryable
+   * failure sleeps `Retry-After` when the provider sent one, else full jitter,
+   * and the loop stops when tries run out, when the sleeps would pass
+   * `OPENROUTER_RETRY_BUDGET_MS`, or when the next try would start past the
+   * deadline. Then the last error is thrown, still classified, so the job's
+   * own retry decides. A caller's abort is never retried.
+   *
+   * `latencyMs` is the answering try's, not the whole loop's.
+   */
+  private async sendWithRetries(
+    sendOnce: (signal: AbortSignal) => Promise<ChatResult>,
+    options?: CompletionOptions,
+  ): Promise<{ result: ChatResult; latencyMs: number }> {
+    const callerSignal = options?.signal;
+    const deadlineAt = options?.deadlineAt;
+    const capMs = Math.min(
+      this.retry.timeoutMs,
+      options?.timeoutMs ?? Number.POSITIVE_INFINITY,
+    );
+    let sleptMs = 0;
+
+    for (let attempt = 1; ; attempt++) {
+      const tryMs =
+        deadlineAt === undefined
+          ? capMs
+          : Math.min(capMs, deadlineAt - Date.now());
+      if (tryMs <= 0) {
+        // Transient like the run deadline itself: the job's retry gets a fresh one.
+        throw new LLMError('The call passed its deadline before it was sent', {
+          retryable: true,
+        });
+      }
+
+      // A timer rather than `AbortSignal.timeout`, so fake timers drive it in specs.
+      const timeout = new AbortController();
+      const timer = setTimeout(
+        () =>
+          timeout.abort(
+            new DOMException(
+              `OpenRouter try timed out after ${tryMs}ms`,
+              'TimeoutError',
+            ),
+          ),
+        tryMs,
+      );
+      const signal = callerSignal
+        ? AbortSignal.any([timeout.signal, callerSignal])
+        : timeout.signal;
+
+      let error: LLMError;
+      const startedAt = Date.now();
+      try {
+        const result = await sendOnce(signal);
+        return { result, latencyMs: Date.now() - startedAt };
+      } catch (raw: unknown) {
+        error = this.classify(raw, callerSignal, timeout.signal, tryMs);
+      } finally {
+        clearTimeout(timer);
+      }
+
+      if (!error.retryable || attempt >= this.retry.maxAttempts) throw error;
+      const delayMs = error.retryAfterMs ?? jitterMs(this.retry, attempt - 1);
+      if (sleptMs + delayMs > this.retry.budgetMs) throw error;
+      if (deadlineAt !== undefined && Date.now() + delayMs >= deadlineAt) {
+        throw error;
+      }
+
+      this.logger.warn(
+        `OpenRouter try ${attempt}/${this.retry.maxAttempts} failed (${error.statusCode ?? 'no status'}: ${error.message}); retrying in ${delayMs}ms`,
+      );
+      try {
+        await sleep(delayMs, callerSignal);
+      } catch (reason: unknown) {
+        throw abortedByCaller(reason);
+      }
+      sleptMs += delayMs;
     }
   }
+
+  /**
+   * The caller's abort wins over everything, our own per-try timeout
+   * included; a timeout that fired is retryable whatever the SDK made of it.
+   */
+  private classify(
+    raw: unknown,
+    callerSignal: AbortSignal | undefined,
+    timeoutSignal: AbortSignal,
+    tryMs: number,
+  ): LLMError {
+    if (callerSignal?.aborted) return abortedByCaller(raw);
+    if (timeoutSignal.aborted) {
+      return new LLMError(`OpenRouter try timed out after ${tryMs}ms`, {
+        retryable: true,
+        cause: raw,
+      });
+    }
+    return toLLMError(raw);
+  }
 }
+
+const abortedByCaller = (cause: unknown): LLMError =>
+  new LLMError('The OpenRouter call was aborted by its caller', {
+    retryable: false,
+    cause,
+  });
