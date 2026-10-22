@@ -1,10 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ArtifactType } from 'src/database/schemas';
 import type { ZodType } from 'zod';
 import {
   ArtifactContent,
+  dedupePollOptions,
   DocumentDraft,
   documentDraftSchemaFor,
+  documentRepairSchema,
   generationSchemaFor,
 } from '../artifact/schemas';
 import { LLMProvider, MessageRole } from '../llm/interfaces';
@@ -50,6 +53,7 @@ import {
 } from './prompts';
 import {
   createSearchWebTool,
+  resolveSearchWebOptions,
   type SearchWebOutput,
   type WebSearchResult,
 } from './tools';
@@ -158,6 +162,10 @@ export class AgentRunnerService implements AgentRunner {
     );
     this.searchWebTool = createSearchWebTool(
       this.configService.getOrThrow<string>('TAVILY_API_KEY'),
+      resolveSearchWebOptions(
+        this.configService.get<string | number>('TAVILY_TIMEOUT_S'),
+        this.configService.get<string>('TAVILY_SEARCH_DEPTH'),
+      ),
     );
   }
 
@@ -324,14 +332,21 @@ export class AgentRunnerService implements AgentRunner {
       { role: MessageRole.User, content: buildGenerationUserPrompt(input) },
     ];
 
+    // A repeated POLL option is fixed in place rather than spending a repair
+    // turn on it (plan M1.9); every other miss goes to the repair below.
+    const parseOptions = {
+      stripNullObjectValues: true,
+      ...(input.type === ArtifactType.POLL
+        ? { prepare: (value: unknown) => this.dropRepeatedPollOptions(value) }
+        : {}),
+    };
+
     const { text: draft } = await this.complete(messages, hooks, schema);
 
     let validationError: unknown;
     try {
       return this.toGenerationResult(
-        this.parser.parseWithSchema(draft, schema, {
-          stripNullObjectValues: true,
-        }),
+        this.parser.parseWithSchema(draft, schema, parseOptions),
         includeTitle,
       );
     } catch (error: unknown) {
@@ -357,9 +372,7 @@ export class AgentRunnerService implements AgentRunner {
 
     try {
       return this.toGenerationResult(
-        this.parser.parseWithSchema(repaired, schema, {
-          stripNullObjectValues: true,
-        }),
+        this.parser.parseWithSchema(repaired, schema, parseOptions),
         includeTitle,
       );
     } catch (error: unknown) {
@@ -395,7 +408,10 @@ export class AgentRunnerService implements AgentRunner {
           content: buildDocumentGenerationUserPrompt(input),
         },
       ],
-      input,
+      {
+        schema: documentDraftSchemaFor(input.includeTitle),
+        maxEnvelopeRepairs: input.maxEnvelopeRepairs,
+      },
       hooks,
     );
 
@@ -408,8 +424,8 @@ export class AgentRunnerService implements AgentRunner {
   /**
    * One Repair (spec §7.2): a fresh two-message call whose system message is
    * byte-identical to the draft's, and whose user message is the Candidate
-   * Source and its bounded violations. The model still answers in the draft's
-   * JSON shape, but only `html` is kept.
+   * Source and its bounded violations. The model answers with `{ html }`
+   * only: a Repair's title and commentary would be thrown away.
    */
   async repairDocument(
     input: DocumentRepairInput,
@@ -433,7 +449,10 @@ export class AgentRunnerService implements AgentRunner {
           ),
         },
       ],
-      input,
+      {
+        schema: documentRepairSchema,
+        maxEnvelopeRepairs: input.maxEnvelopeRepairs,
+      },
       hooks,
     );
 
@@ -448,18 +467,17 @@ export class AgentRunnerService implements AgentRunner {
    * An invalid envelope gets one Zod repair turn when the caller's Repair
    * budget allows it, and is final when it does not.
    */
-  private async completeDocument(
+  private async completeDocument<T>(
     call: 'draft' | 'Repair',
     messages: LLMMessage[],
     {
-      includeTitle,
+      schema,
       maxEnvelopeRepairs,
-    }: { includeTitle: boolean; maxEnvelopeRepairs: number },
+    }: { schema: ZodType<T>; maxEnvelopeRepairs: number },
     hooks?: AgentHooks,
-  ): Promise<{ parsed: DocumentDraft; envelopeRepairs: number }> {
-    const schema = documentDraftSchemaFor(includeTitle);
+  ): Promise<{ parsed: T; envelopeRepairs: number }> {
     const options = { maxTokens: this.documentMaxOutputTokens };
-    const parse = (text: string): DocumentDraft =>
+    const parse = (text: string): T =>
       this.parser.parseWithSchema(text, schema, {
         stripNullObjectValues: true,
       });
@@ -537,6 +555,16 @@ export class AgentRunnerService implements AgentRunner {
       commentary: parsed.commentary,
       html: parsed.html,
     };
+  }
+
+  private dropRepeatedPollOptions(value: unknown): unknown {
+    const { value: deduped, removed } = dedupePollOptions(value);
+    if (removed > 0) {
+      this.logger.log(
+        `Dropped ${removed} repeated POLL option(s) before validation`,
+      );
+    }
+    return deduped;
   }
 
   private toGenerationResult(

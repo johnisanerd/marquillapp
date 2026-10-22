@@ -2,9 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { DesignSystemDefinition } from '../design-system/design-system-definition';
 import type { DocumentRenderer } from '../workflow/engine/workflow.types';
+import { judge } from './judge';
 import {
   browserlessEndpoint,
   renderDocumentSession,
+  type RenderSessionOptions,
   type RenderSessionResult,
 } from './render-session';
 
@@ -21,7 +23,10 @@ export class DocumentRendererService implements DocumentRenderer {
     definition: DesignSystemDefinition,
     documentSource: string,
   ): Promise<RenderSessionResult> {
-    return this.renderSession(this.endpoint(), definition, documentSource);
+    return this.renderSession(this.endpoint(), definition, documentSource, {
+      // A session with findings goes to Repair, so its cover would be thrown away.
+      skipCover: (facts) => judge(definition, facts).length > 0,
+    });
   }
 
   private endpoint(): string {
@@ -36,7 +41,8 @@ export class DocumentRendererService implements DocumentRenderer {
     endpoint: string,
     definition: DesignSystemDefinition,
     documentSource: string,
+    options: RenderSessionOptions,
   ): Promise<RenderSessionResult> {
-    return renderDocumentSession(endpoint, definition, documentSource);
+    return renderDocumentSession(endpoint, definition, documentSource, options);
   }
 }

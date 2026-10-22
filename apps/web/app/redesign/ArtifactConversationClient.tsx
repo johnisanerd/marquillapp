@@ -65,6 +65,15 @@ type ConversationEntry =
 
 const REFINE_TEXTAREA_MAX_HEIGHT = 168;
 
+/**
+ * Drops `?run=` from the address bar without a Next.js navigation, so the page
+ * neither re-renders on the server nor remounts. The App Router syncs its own
+ * URL state from `history.replaceState`.
+ */
+function replaceUrlWithoutNavigation(url: string) {
+  window.history.replaceState(window.history.state, "", url);
+}
+
 function prefersReducedMotion() {
   return typeof window.matchMedia === "function"
     && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -199,9 +208,9 @@ export default function ArtifactConversationClient({
       setLoadError(null);
     } finally {
       setActiveRunId(undefined);
-      router.replace(cleanArtifactUrl);
+      replaceUrlWithoutNavigation(cleanArtifactUrl);
     }
-  }, [appendArtifact, cleanArtifactUrl, readArtifact, router]);
+  }, [appendArtifact, cleanArtifactUrl, readArtifact]);
 
   const handleTerminalFailure = useCallback(() => {
     // Keep ?run= in the URL so refresh can replay the retained terminal reason.
@@ -216,7 +225,8 @@ export default function ArtifactConversationClient({
     showDurableFailure,
   } = useArtifactRun({
     runId: activeRunId,
-    enabled: isHydrated,
+    // Follow a ?run= from the first render; the hook does nothing without a run id.
+    enabled: true,
     initialType: artifactType,
     onType: setArtifactType,
     onArtifactReady: handleArtifactReady,
@@ -246,7 +256,7 @@ export default function ArtifactConversationClient({
         if (!attempt) {
           setActiveRunId(undefined);
           clearRun();
-          if (initialRunIdRef.current) router.replace(cleanArtifactUrl);
+          if (initialRunIdRef.current) replaceUrlWithoutNavigation(cleanArtifactUrl);
           return;
         }
 
@@ -284,7 +294,6 @@ export default function ArtifactConversationClient({
     cleanArtifactUrl,
     clearRun,
     readArtifact,
-    router,
     showDurableFailure,
   ]);
 

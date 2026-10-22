@@ -49,7 +49,6 @@ describe('runWorkflow', () => {
     };
     const run = {
       runId: '665f1b2c3d4e5f6a7b8c9d03',
-      setCurrentStep: jest.fn().mockResolvedValue(undefined),
       saveResearchContext: jest.fn().mockResolvedValue(undefined),
       complete: jest.fn().mockResolvedValue(undefined),
       fail: jest.fn().mockResolvedValue(undefined),
@@ -196,16 +195,6 @@ describe('runWorkflow', () => {
       expect(ctx).toBe(deps.ctx);
     });
 
-    it('should record the current step on the run at each boundary', async () => {
-      await runWorkflow(makeInput(), deps);
-
-      expect(mocks.run.setCurrentStep.mock.calls.map(([s]) => s)).toEqual([
-        RESOLVE_INPUT,
-        GENERATE,
-        PERSIST_VERSION,
-      ]);
-    });
-
     it('should time each step in the diagnostics, leaving a failed step open', async () => {
       (deps.handlers[GENERATE] as jest.Mock).mockRejectedValue(
         new Error('boom'),
@@ -306,6 +295,36 @@ describe('runWorkflow', () => {
       await runWorkflow(makeInput(), deps);
 
       expect(mocks.meter.commit).toHaveBeenCalledTimes(1);
+    });
+
+    it('should emit run.completed before the debit commits', async () => {
+      await runWorkflow(makeInput(), deps);
+
+      const completedCall = mocks.emitter.emit.mock.calls.findIndex(
+        ([event]) => event.type === RunEventType.RUN_COMPLETED,
+      );
+      expect(
+        mocks.emitter.emit.mock.invocationCallOrder[completedCall],
+      ).toBeLessThan(mocks.meter.commit.mock.invocationCallOrder[0]);
+      expect(mocks.meter.commit.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.emitter.flush.mock.invocationCallOrder.at(-1)!,
+      );
+    });
+
+    it('should still emit run.completed when the debit commit rejects', async () => {
+      mocks.meter.commit.mockRejectedValue(transient('db down'));
+
+      await runWorkflow(makeInput(), deps).catch(() => undefined);
+
+      expect(emittedTypes()).toContain(RunEventType.RUN_COMPLETED);
+    });
+
+    it('should flush the emitter when the debit commit rejects', async () => {
+      mocks.meter.commit.mockRejectedValue(transient('db down'));
+
+      await expect(runWorkflow(makeInput(), deps)).rejects.toThrow('db down');
+
+      expect(mocks.emitter.flush).toHaveBeenCalledTimes(1);
     });
 
     it('should not commit when a step fails', async () => {

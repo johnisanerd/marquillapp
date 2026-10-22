@@ -118,6 +118,10 @@ Copy `.env.example` and fill in real values. Required keys not in the example:
 - `TAVILY_API_KEY` — autonomous web research tool
 - `GENERATION_MODEL`, `RESEARCH_MODEL` — OpenRouter model identifiers used by `AgentRunnerService`
 
+Optional keys in the example (worker):
+- `TAVILY_TIMEOUT_S` (default `10`) — per-search Tavily timeout in seconds
+- `TAVILY_SEARCH_DEPTH` (default `advanced`, or `basic`) — Tavily search depth
+
 ## Production
 
 - The same build runs two processes: `node dist/main.js` (HTTP) and `node dist/workflow/workers/workflow.worker.js` (worker).

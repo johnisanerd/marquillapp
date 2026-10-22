@@ -7,6 +7,7 @@ jest.mock(
   { virtual: true },
 );
 
+import * as judgeModule from './judge';
 import { DocumentRendererService } from './document-renderer.service';
 import type { RenderSessionResult } from './render-session';
 
@@ -50,6 +51,32 @@ describe('DocumentRendererService', () => {
       expect(url.searchParams.get('token')).toBe('secret-token');
       expect(passedDefinition).toBe(definition);
       expect(source).toBe('<html></html>');
+    });
+
+    it('should skip the cover exactly when the probe has findings', async () => {
+      const { service, mocks } = makeService({
+        BROWSERLESS_URL: 'https://production-sfo.browserless.io',
+        BROWSERLESS_TOKEN: 'secret-token',
+      });
+      const definition = { id: 'margin' } as never;
+      const facts = { measured: true } as never;
+      const judged = jest.spyOn(judgeModule, 'judge');
+
+      await service.render(definition, '<html></html>');
+
+      const { skipCover } = (
+        mocks.renderSession.mock.calls[0] as unknown as [
+          string,
+          unknown,
+          string,
+          { skipCover: (f: never) => boolean },
+        ]
+      )[3];
+      judged.mockReturnValueOnce([{ code: 'layout.overflow' } as never]);
+      expect(skipCover(facts)).toBe(true);
+      judged.mockReturnValueOnce([]);
+      expect(skipCover(facts)).toBe(false);
+      expect(judged).toHaveBeenCalledWith(definition, facts);
     });
 
     it('should fail without opening a session when Browserless is not configured', async () => {

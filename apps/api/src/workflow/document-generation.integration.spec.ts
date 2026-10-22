@@ -214,7 +214,6 @@ const makeRun = () => {
       return Promise.resolve();
     }),
     readAcceptedCandidate: jest.fn(() => Promise.resolve(accepted)),
-    setCurrentStep: jest.fn().mockResolvedValue(undefined),
     saveResearchContext: jest.fn().mockResolvedValue(undefined),
     recordRenderAttempt: jest
       .fn<Promise<void>, [RenderAttemptUsage]>()
@@ -223,6 +222,7 @@ const makeRun = () => {
       .fn<Promise<void>, [DocumentCheck]>()
       .mockResolvedValue(undefined),
     getLatestCompletedResearch: jest.fn(),
+    readAcceptedCandidateText: jest.fn(),
     complete: jest.fn().mockResolvedValue(undefined),
     fail: jest.fn().mockResolvedValue(undefined),
     recordQueueWait: jest.fn().mockResolvedValue(undefined),

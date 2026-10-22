@@ -178,6 +178,32 @@ describe('renderDocumentSession', () => {
     expect(result.pdf).toBe(PDF);
   });
 
+  it('should skip the cover and still print when skipCover returns true', async () => {
+    const skipCover = jest.fn().mockReturnValue(true);
+
+    const result = await renderDocumentSession('ws://b', definition, '', {
+      skipCover,
+    });
+
+    expect(skipCover).toHaveBeenCalledWith(
+      expect.objectContaining({ pages: probed.pages }),
+    );
+    expect(mocks.page.screenshot).not.toHaveBeenCalled();
+    expect(result.cover.ok).toBe(false);
+    expect(result.pdf).toBe(PDF);
+    expect(result.pageCount).toBe(2);
+  });
+
+  it('should capture the cover when skipCover returns false', async () => {
+    const result = await renderDocumentSession('ws://b', definition, '', {
+      skipCover: () => false,
+    });
+
+    expect(mocks.page.screenshot).toHaveBeenCalledTimes(1);
+    expect(result.cover).toEqual({ ok: true, png: PNG });
+    expect(result.pdf).toBe(PDF);
+  });
+
   it('should report a timeout and disconnect when the deadline expires', async () => {
     mocks.page.setContent.mockReturnValue(new Promise(() => undefined));
 

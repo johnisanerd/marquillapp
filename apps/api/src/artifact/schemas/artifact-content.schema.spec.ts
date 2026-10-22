@@ -10,11 +10,62 @@ import { z, ZodError } from 'zod';
 import { ArtifactType } from 'src/database/schemas';
 import {
   documentDraftSchemaFor,
+  documentRepairSchema,
   generationSchemaFor,
   parseArtifactContent,
+  postContentSchema,
 } from './artifact-content.schema';
 
 describe('generationSchemaFor', () => {
+  const pollJsonSchema = () =>
+    z.toJSONSchema(generationSchemaFor(ArtifactType.POLL, true), {
+      target: 'draft-7',
+      io: 'output',
+    });
+
+  it('should constrain durationDays to the LinkedIn durations in the JSON schema', () => {
+    expect(pollJsonSchema()).toMatchObject({
+      properties: {
+        poll: {
+          properties: {
+            durationDays: { type: 'number', enum: [1, 3, 7, 14] },
+          },
+        },
+      },
+    });
+  });
+
+  it('should constrain the poll question and options to non-blank, LinkedIn-length strings in the JSON schema', () => {
+    expect(pollJsonSchema()).toMatchObject({
+      properties: {
+        poll: {
+          properties: {
+            question: { type: 'string', pattern: '\\S', maxLength: 140 },
+            options: {
+              items: { type: 'string', pattern: '\\S', maxLength: 30 },
+              minItems: 2,
+              maxItems: 4,
+            },
+          },
+        },
+      },
+    });
+  });
+
+  it('should cap the commentary in the JSON schema', () => {
+    expect(pollJsonSchema()).toMatchObject({
+      properties: { commentary: { maxLength: 3000 } },
+    });
+    expect(
+      z.toJSONSchema(generationSchemaFor(ArtifactType.POST, false), {
+        target: 'draft-7',
+        io: 'output',
+      }),
+    ).toMatchObject({
+      properties: { commentary: { minLength: 1, maxLength: 3000 } },
+    });
+  });
+
   it('should refuse a DOCUMENT, whose contract is the draft envelope', () => {
     expect(() => generationSchemaFor(ArtifactType.DOCUMENT, true)).toThrow(
       'No generation schema implemented',
@@ -48,6 +99,25 @@ describe('documentDraftSchemaFor', () => {
     expect(() =>
       documentDraftSchemaFor(false).parse({ commentary: 'Hi', html: '' }),
     ).toThrow(ZodError);
+  });
+});
+
+describe('documentRepairSchema', () => {
+  it('should expose only html to the provider', () => {
+    const jsonSchema = z.toJSONSchema(documentRepairSchema, {
+      target: 'draft-7',
+      io: 'output',
+    });
+
+    expect(jsonSchema).toMatchObject({
+      properties: { html: { type: 'string', minLength: 1 } },
+      required: ['html'],
+    });
+    expect(Object.keys(jsonSchema.properties ?? {})).toEqual(['html']);
+  });
+
+  it('should reject an empty html', () => {
+    expect(() => documentRepairSchema.parse({ html: '' })).toThrow(ZodError);
   });
 });
 
@@ -96,6 +166,14 @@ describe('parseArtifactContent', () => {
           commentary: '🎉'.repeat(1501),
         }),
       ).toThrow(ZodError);
+    });
+
+    it('should report an over-long commentary once, not once per check', () => {
+      const result = postContentSchema.safeParse({
+        commentary: 'a'.repeat(3001),
+      });
+
+      expect(result.error?.issues).toHaveLength(1);
     });
 
     it('should reject the commentary when it is empty', () => {

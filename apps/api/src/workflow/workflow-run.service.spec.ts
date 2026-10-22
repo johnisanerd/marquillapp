@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto';
 import { Types } from 'mongoose';
 import { RunKind, RunStatus } from '../database/schemas';
 import type { DocumentDiagnostics } from './engine/workflow.types';
-import { FailureCode, WorkflowStep } from './workflow.constants';
+import { FailureCode } from './workflow.constants';
 import { WorkflowRunService } from './workflow-run.service';
 
 // Typed, so an update filter can be written as an object without an `any`.
@@ -113,6 +113,34 @@ describe('WorkflowRunService', () => {
     it('should return null without touching the model for a malformed id', async () => {
       await expect(service.getRun('not-an-object-id')).resolves.toBeNull();
       expect(mocks.workflowRunModel.findById).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('readAcceptedCandidateText', () => {
+    const query = (result: unknown) => ({
+      lean: () => ({ exec: () => Promise.resolve(result) }),
+    });
+
+    it('should look the text up by hash and ACCEPTED role', async () => {
+      mocks.candidateSourceModel.findOne.mockReturnValue(
+        query({ candidate: '<html/>' }),
+      );
+
+      await expect(
+        service.handleFor(fixtures.runId).readAcceptedCandidateText('abc'),
+      ).resolves.toBe('<html/>');
+      expect(mocks.candidateSourceModel.findOne).toHaveBeenCalledWith(
+        { candidateSha256: 'abc', role: 'ACCEPTED' },
+        { candidate: 1 },
+      );
+    });
+
+    it('should return undefined when none is kept', async () => {
+      mocks.candidateSourceModel.findOne.mockReturnValue(query(null));
+
+      await expect(
+        service.handleFor(fixtures.runId).readAcceptedCandidateText('abc'),
+      ).resolves.toBeUndefined();
     });
   });
 
@@ -222,17 +250,6 @@ describe('WorkflowRunService', () => {
   describe('handleFor', () => {
     it('should bind the runId onto the handle', () => {
       expect(service.handleFor(fixtures.runId).runId).toBe(fixtures.runId);
-    });
-
-    it('should persist the current step at a boundary', async () => {
-      await service
-        .handleFor(fixtures.runId)
-        .setCurrentStep(WorkflowStep.GENERATE);
-
-      expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(
-        { _id: expect.any(Types.ObjectId) },
-        { $set: { currentStep: WorkflowStep.GENERATE } },
-      );
     });
 
     it('should persist the research context so a later refine reuses it', async () => {

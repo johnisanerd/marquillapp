@@ -360,6 +360,49 @@ describe('AgentRunnerService', () => {
       });
     });
 
+    describe('repeated poll options', () => {
+      const pollJson = (options: string[]) =>
+        generatedJson({
+          poll: { question: 'Which one?', options, durationDays: 7 },
+        });
+
+      it('should drop a repeated option, keeping the first, without a repair call', async () => {
+        const log = jest
+          .spyOn(Logger.prototype, 'log')
+          .mockImplementation(() => undefined);
+        mocks.llmService.complete.mockResolvedValue(
+          completion(pollJson(['Yes', 'No', ' yes '])),
+        );
+
+        await expect(
+          service.generate({ ...fixtures.input, type: ArtifactType.POLL }),
+        ).resolves.toMatchObject({
+          content: { poll: { options: ['Yes', 'No'] } },
+        });
+        expect(mocks.llmService.complete).toHaveBeenCalledTimes(1);
+        expect(log).toHaveBeenCalledWith(
+          expect.stringContaining('Dropped 1 repeated POLL option'),
+        );
+        log.mockRestore();
+      });
+
+      it('should still repair when fewer than two options would remain', async () => {
+        mocks.llmService.complete
+          .mockResolvedValueOnce(completion(pollJson(['Yes', 'yes'])))
+          .mockResolvedValueOnce(completion(pollJson(['Yes', 'No'])));
+
+        await expect(
+          service.generate({ ...fixtures.input, type: ArtifactType.POLL }),
+        ).resolves.toMatchObject({
+          content: { poll: { options: ['Yes', 'No'] } },
+        });
+        expect(mocks.llmService.complete).toHaveBeenCalledTimes(2);
+        expect(messagesOfCall(2)[3].content).toContain(
+          'poll options must be unique',
+        );
+      });
+    });
+
     describe('the inline repair retry', () => {
       it('should re-prompt with the validation error and return the repaired content', async () => {
         mocks.llmService.complete
@@ -680,12 +723,17 @@ describe('AgentRunnerService', () => {
     const HTML = '<!doctype html><html><body></body></html>';
     const CANDIDATE = '<!doctype html><html><body>13px</body></html>';
     const repairJson = (overrides: Record<string, unknown> = {}) =>
-      JSON.stringify({
-        title: 'A different title',
-        commentary: 'Different commentary.',
-        html: HTML,
-        ...overrides,
-      });
+      JSON.stringify({ html: HTML, ...overrides });
+
+    /** The properties of the response schema sent on the nth (1-based) call. */
+    const responseSchemaPropertiesOfCall = (n: number): string[] => {
+      const schema = completeCalls()[n - 1][2]?.responseSchema?.schema;
+      const jsonSchema = z.toJSONSchema(schema as z.ZodType, {
+        target: 'draft-7',
+        io: 'output',
+      }) as { properties?: Record<string, unknown> };
+      return Object.keys(jsonSchema.properties ?? {});
+    };
 
     const repairInput: DocumentRepairInput = {
       fragment: 'DESIGN SYSTEM: Margin (margin v2)',
@@ -706,7 +754,7 @@ describe('AgentRunnerService', () => {
       maxEnvelopeRepairs: 1,
     };
 
-    it('should keep only the Candidate Source, ignoring the title and commentary', async () => {
+    it('should return the Candidate Source the model wrote', async () => {
       mocks.llmService.complete.mockResolvedValue(completion(repairJson()));
 
       await expect(service.repairDocument(repairInput)).resolves.toEqual({
@@ -714,6 +762,48 @@ describe('AgentRunnerService', () => {
         envelopeRepairs: 0,
       });
       expect(mocks.llmService.complete).toHaveBeenCalledTimes(1);
+    });
+
+    it('should constrain the Repair to a schema with only html, even when a title is asked for', async () => {
+      mocks.llmService.complete.mockResolvedValue(completion(repairJson()));
+
+      await service.repairDocument(repairInput);
+
+      expect(responseSchemaPropertiesOfCall(1)).toEqual(['html']);
+    });
+
+    it('should keep the html-only schema on the envelope repair turn', async () => {
+      mocks.llmService.complete
+        .mockResolvedValueOnce(completion(repairJson({ html: '' })))
+        .mockResolvedValueOnce(completion(repairJson()));
+
+      await service.repairDocument(repairInput);
+
+      expect(responseSchemaPropertiesOfCall(2)).toEqual(['html']);
+    });
+
+    it('should drop a title and commentary the model writes anyway', async () => {
+      mocks.llmService.complete.mockResolvedValue(
+        completion(
+          repairJson({ title: 'A different title', commentary: 'Different.' }),
+        ),
+      );
+
+      await expect(service.repairDocument(repairInput)).resolves.toEqual({
+        html: HTML,
+        envelopeRepairs: 0,
+      });
+    });
+
+    it('should end the user message by asking for the html JSON only', async () => {
+      mocks.llmService.complete.mockResolvedValue(completion(repairJson()));
+
+      await service.repairDocument(repairInput);
+
+      const user = messagesOfCall(1)[1].content ?? '';
+      expect(user.split('\n').at(-1)).toBe(
+        'Answer with JSON {"html": …} only.',
+      );
     });
 
     it('should send a fresh two-message call whose system message is byte-identical to the draft call', async () => {

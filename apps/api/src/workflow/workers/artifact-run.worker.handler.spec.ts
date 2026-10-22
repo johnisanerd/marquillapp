@@ -83,11 +83,11 @@ const makeProcessor = () => {
   };
   const runHandle = {
     runId: 'run-1',
-    setCurrentStep: jest.fn().mockResolvedValue(undefined),
     saveResearchContext: jest.fn().mockResolvedValue(undefined),
     recordRenderAttempt: jest.fn().mockResolvedValue(undefined),
     recordDocumentCheck: jest.fn().mockResolvedValue(undefined),
     getLatestCompletedResearch: jest.fn(),
+    readAcceptedCandidateText: jest.fn(),
     complete: jest.fn().mockResolvedValue(undefined),
     fail: jest.fn().mockResolvedValue(undefined),
     readAcceptedCandidate: jest.fn().mockResolvedValue(undefined),

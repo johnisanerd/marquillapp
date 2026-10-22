@@ -310,7 +310,6 @@ export interface RunLlmUsage {
 /** The durable run record, narrowed to what the engine and its steps write. */
 export interface RunRecordHandle {
   readonly runId: string;
-  setCurrentStep(step: WorkflowStep): Promise<void>;
   saveResearchContext(research: ResearchResult): Promise<void>;
   recordRenderAttempt(usage: RenderAttemptUsage): Promise<void>;
   recordDocumentCheck(check: DocumentCheck): Promise<void>;
@@ -337,6 +336,13 @@ export interface RunRecordHandle {
    * handle write the sum as `llmUsage`, in the update they already make.
    */
   recordModelCall(usage: Usage): void;
+  /**
+   * DOCUMENT REFINE: the kept text of an ACCEPTED Candidate Source with this
+   * hash, if any. Unverified: the caller checks the hash.
+   */
+  readAcceptedCandidateText(
+    candidateSha256: string,
+  ): Promise<string | undefined>;
   complete(creditsUsed: number): Promise<void>;
   fail(failureCode: FailureCode, failureReason: string): Promise<void>;
 }
