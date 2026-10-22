@@ -360,6 +360,49 @@ describe('AgentRunnerService', () => {
       });
     });
 
+    describe('repeated poll options', () => {
+      const pollJson = (options: string[]) =>
+        generatedJson({
+          poll: { question: 'Which one?', options, durationDays: 7 },
+        });
+
+      it('should drop a repeated option, keeping the first, without a repair call', async () => {
+        const log = jest
+          .spyOn(Logger.prototype, 'log')
+          .mockImplementation(() => undefined);
+        mocks.llmService.complete.mockResolvedValue(
+          completion(pollJson(['Yes', 'No', ' yes '])),
+        );
+
+        await expect(
+          service.generate({ ...fixtures.input, type: ArtifactType.POLL }),
+        ).resolves.toMatchObject({
+          content: { poll: { options: ['Yes', 'No'] } },
+        });
+        expect(mocks.llmService.complete).toHaveBeenCalledTimes(1);
+        expect(log).toHaveBeenCalledWith(
+          expect.stringContaining('Dropped 1 repeated POLL option'),
+        );
+        log.mockRestore();
+      });
+
+      it('should still repair when fewer than two options would remain', async () => {
+        mocks.llmService.complete
+          .mockResolvedValueOnce(completion(pollJson(['Yes', 'yes'])))
+          .mockResolvedValueOnce(completion(pollJson(['Yes', 'No'])));
+
+        await expect(
+          service.generate({ ...fixtures.input, type: ArtifactType.POLL }),
+        ).resolves.toMatchObject({
+          content: { poll: { options: ['Yes', 'No'] } },
+        });
+        expect(mocks.llmService.complete).toHaveBeenCalledTimes(2);
+        expect(messagesOfCall(2)[3].content).toContain(
+          'poll options must be unique',
+        );
+      });
+    });
+
     describe('the inline repair retry', () => {
       it('should re-prompt with the validation error and return the repaired content', async () => {
         mocks.llmService.complete

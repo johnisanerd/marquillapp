@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { ArtifactType } from 'src/database/schemas';
 import { linkedInCharCount } from '../utils/linkedin-char-count.util';
 import { CONTENT_TITLE_MAX_LENGTH } from '../../common/constants';
+import { pollOptionKey } from './dedupe-poll-options';
 
 export const LINKEDIN_MAX_POST_CHARS = 3000;
 export const LINKEDIN_MAX_POLL_QUESTION_CHARS = 140;
@@ -83,10 +84,10 @@ export const pollContentSchema = z.object({
       .max(4, 'poll cannot have more than 4 options')
       // Strict mode cannot express this (no `uniqueItems`, and the rule is
       // case- and whitespace-insensitive), so it stays a refine.
+      // `dedupePollOptions` drops exact repeats before this runs.
       .refine(
         (options) =>
-          new Set(options.map((o) => o.trim().toLowerCase())).size ===
-          options.length,
+          new Set(options.map(pollOptionKey)).size === options.length,
         { message: 'poll options must be unique' },
       ),
     durationDays: z.literal(

@@ -1,8 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ArtifactType } from 'src/database/schemas';
 import type { ZodType } from 'zod';
 import {
   ArtifactContent,
+  dedupePollOptions,
   DocumentDraft,
   documentDraftSchemaFor,
   generationSchemaFor,
@@ -329,14 +331,21 @@ export class AgentRunnerService implements AgentRunner {
       { role: MessageRole.User, content: buildGenerationUserPrompt(input) },
     ];
 
+    // A repeated POLL option is fixed in place rather than spending a repair
+    // turn on it (plan M1.9); every other miss goes to the repair below.
+    const parseOptions = {
+      stripNullObjectValues: true,
+      ...(input.type === ArtifactType.POLL
+        ? { prepare: (value: unknown) => this.dropRepeatedPollOptions(value) }
+        : {}),
+    };
+
     const { text: draft } = await this.complete(messages, hooks, schema);
 
     let validationError: unknown;
     try {
       return this.toGenerationResult(
-        this.parser.parseWithSchema(draft, schema, {
-          stripNullObjectValues: true,
-        }),
+        this.parser.parseWithSchema(draft, schema, parseOptions),
         includeTitle,
       );
     } catch (error: unknown) {
@@ -362,9 +371,7 @@ export class AgentRunnerService implements AgentRunner {
 
     try {
       return this.toGenerationResult(
-        this.parser.parseWithSchema(repaired, schema, {
-          stripNullObjectValues: true,
-        }),
+        this.parser.parseWithSchema(repaired, schema, parseOptions),
         includeTitle,
       );
     } catch (error: unknown) {
@@ -542,6 +549,16 @@ export class AgentRunnerService implements AgentRunner {
       commentary: parsed.commentary,
       html: parsed.html,
     };
+  }
+
+  private dropRepeatedPollOptions(value: unknown): unknown {
+    const { value: deduped, removed } = dedupePollOptions(value);
+    if (removed > 0) {
+      this.logger.log(
+        `Dropped ${removed} repeated POLL option(s) before validation`,
+      );
+    }
+    return deduped;
   }
 
   private toGenerationResult(
