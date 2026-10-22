@@ -371,6 +371,51 @@ describe('OpenRouterStrategy', () => {
       );
     });
 
+    it('should keep enum, pattern and length constraints in a strict-mode schema', async () => {
+      send.mockResolvedValue({ choices: [{ message: { content: '{}' } }] });
+
+      await strategy.complete(
+        [{ role: MessageRole.User, content: 'build a poll' }],
+        {
+          responseSchema: {
+            name: 'artifact_generation',
+            // The shape of the POLL generation contract.
+            schema: z.object({
+              commentary: z.string().min(1).max(3000).optional(),
+              poll: z.object({
+                question: z.string().regex(/\S/).max(140),
+                options: z.array(z.string().regex(/\S/).max(30)).min(2).max(4),
+                durationDays: z.literal([1, 3, 7, 14]),
+              }),
+            }),
+          },
+        },
+      );
+
+      const schema = lastChatRequest().responseFormat?.jsonSchema.schema;
+      expect(schema).toMatchObject({
+        required: ['commentary', 'poll'],
+        additionalProperties: false,
+        properties: {
+          commentary: { type: ['string', 'null'], maxLength: 3000 },
+          poll: {
+            required: ['question', 'options', 'durationDays'],
+            additionalProperties: false,
+            properties: {
+              question: { type: 'string', pattern: '\\S', maxLength: 140 },
+              options: {
+                items: { type: 'string', pattern: '\\S', maxLength: 30 },
+              },
+              durationDays: { type: 'number', enum: [1, 3, 7, 14] },
+            },
+          },
+        },
+      });
+      // Strict mode rejects keywords it cannot enforce; Zod's refines must
+      // not leak into the schema as anything but these.
+      expect(JSON.stringify(schema)).not.toMatch(/"(oneOf|allOf|not|const)"/);
+    });
+
     it('should omit response constraints for an unconstrained completion', async () => {
       send.mockResolvedValue({ choices: [{ message: { content: 'x' } }] });
 

@@ -18,9 +18,20 @@ export const artifactTitleSchema = z
 
 // The commentary cap is counted the way LinkedIn counts: by UTF-16 code unit,
 // so an astral-plane emoji costs 2. Shared by every arm that carries commentary.
+//
+// Plain checks (`.max`, `.regex`, `z.literal`) reach the strict JSON schema the
+// model is constrained by, so its answer cannot break them; a `.refine` runs
+// only after it answers, and a miss costs a repair turn. JSON Schema's
+// `maxLength` counts code points, so an emoji-heavy answer can still overshoot;
+// the LinkedIn-count refine stays as the exact gate behind each cap. `abort`
+// stops at the first failed check, so a repair prompt names each miss once.
 const commentarySchema = z
   .string()
   .min(1, 'commentary must not be empty')
+  .max(LINKEDIN_MAX_POST_CHARS, {
+    message: `commentary exceeds ${LINKEDIN_MAX_POST_CHARS} LinkedIn characters`,
+    abort: true,
+  })
   .refine((text) => linkedInCharCount(text) <= LINKEDIN_MAX_POST_CHARS, {
     message: `commentary exceeds ${LINKEDIN_MAX_POST_CHARS} LinkedIn characters`,
   });
@@ -41,7 +52,11 @@ export const pollContentSchema = z.object({
   poll: z.object({
     question: z
       .string()
-      .refine((text) => text.trim().length > 0, 'question must not be empty')
+      .regex(/\S/, { message: 'question must not be empty', abort: true })
+      .max(LINKEDIN_MAX_POLL_QUESTION_CHARS, {
+        message: `question exceeds ${LINKEDIN_MAX_POLL_QUESTION_CHARS} LinkedIn characters`,
+        abort: true,
+      })
       .refine(
         (text) => linkedInCharCount(text) <= LINKEDIN_MAX_POLL_QUESTION_CHARS,
         {
@@ -52,7 +67,11 @@ export const pollContentSchema = z.object({
       .array(
         z
           .string()
-          .refine((text) => text.trim().length > 0, 'option must not be empty')
+          .regex(/\S/, { message: 'option must not be empty', abort: true })
+          .max(LINKEDIN_MAX_POLL_OPTION_CHARS, {
+            message: `option exceeds ${LINKEDIN_MAX_POLL_OPTION_CHARS} LinkedIn characters`,
+            abort: true,
+          })
           .refine(
             (text) => linkedInCharCount(text) <= LINKEDIN_MAX_POLL_OPTION_CHARS,
             {
@@ -62,21 +81,18 @@ export const pollContentSchema = z.object({
       )
       .min(2, 'poll must have at least 2 options')
       .max(4, 'poll cannot have more than 4 options')
+      // Strict mode cannot express this (no `uniqueItems`, and the rule is
+      // case- and whitespace-insensitive), so it stays a refine.
       .refine(
         (options) =>
           new Set(options.map((o) => o.trim().toLowerCase())).size ===
           options.length,
         { message: 'poll options must be unique' },
       ),
-    durationDays: z
-      .number()
-      .refine(
-        (days): days is (typeof POLL_DURATION_DAYS)[number] =>
-          (POLL_DURATION_DAYS as readonly number[]).includes(days),
-        {
-          message: `durationDays must be one of ${POLL_DURATION_DAYS.join(', ')}`,
-        },
-      ),
+    durationDays: z.literal(
+      POLL_DURATION_DAYS,
+      `durationDays must be one of ${POLL_DURATION_DAYS.join(', ')}`,
+    ),
   }),
 });
 
