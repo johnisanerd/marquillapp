@@ -214,7 +214,6 @@ const makeRun = () => {
       return Promise.resolve();
     }),
     readAcceptedCandidate: jest.fn(() => Promise.resolve(accepted)),
-    setCurrentStep: jest.fn().mockResolvedValue(undefined),
     saveResearchContext: jest.fn().mockResolvedValue(undefined),
     recordRenderAttempt: jest
       .fn<Promise<void>, [RenderAttemptUsage]>()

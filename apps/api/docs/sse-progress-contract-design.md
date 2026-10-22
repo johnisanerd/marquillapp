@@ -225,7 +225,7 @@ hand-off seam (which events belong to replay vs live?) reintroducing exactly the
 subscribe-race #98 §6 wanted gone. `XREAD BLOCK` collapses both.
 
 **Rejected — poll the `WorkflowRun` Mongo doc.** The run record only holds coarse
-`currentStep` (#98 §4), not the event stream; polling it can't deliver
+`status` (`currentStep` is no longer written, M1.1), not the event stream; polling it can't deliver
 `usage.tick`/`step.progress` and adds DB load. It is used **only** as the
 cold-start fallback (§5), not the live path.
 
@@ -254,11 +254,12 @@ branches:
   hit the 204.
 - **Cold-start fallback (stream gone, run still known):** if the stream key has
   expired (§8) but the `WorkflowRun` doc exists, synthesize a **single snapshot**
-  from the durable record (#98 §4: `status`, `currentStep`) — emit a
+  from the durable record (#98 §4: `status`; `currentStep` is no longer written, M1.1) — emit a
   `run.started` (reconstructed `steps` from `buildWorkflow(input)`) and, if
   terminal, the matching `run.completed`/`run.failed` — then close. The client
   reaches a correct final UI state even after the fine-grained log is reclaimed.
-  This is exactly the "reconnect fallback" #98 §4 parked `currentStep` for.
+  `currentStep` was once parked for this fallback but is no longer written
+  (M1.1), so the snapshot cannot report a mid-run step.
 
 ## 6. Heartbeats & the terminal/close handshake
 

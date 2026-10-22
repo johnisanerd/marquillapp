@@ -24,7 +24,6 @@ import type { Usage } from '../llm/interfaces';
 import {
   CANDIDATE_SOURCE_RETENTION_MS,
   FailureCode,
-  WorkflowStep,
 } from './workflow.constants';
 
 export interface CreateRunInput {
@@ -140,8 +139,6 @@ export class WorkflowRunService {
 
     return {
       runId,
-      setCurrentStep: (step: WorkflowStep) =>
-        this.patch(runId, { currentStep: step }),
       saveResearchContext: (research: ResearchResult) =>
         this.patch(runId, { researchContext: research }),
       recordRenderAttempt: (usage: RenderAttemptUsage) =>

@@ -310,7 +310,6 @@ export interface RunLlmUsage {
 /** The durable run record, narrowed to what the engine and its steps write. */
 export interface RunRecordHandle {
   readonly runId: string;
-  setCurrentStep(step: WorkflowStep): Promise<void>;
   saveResearchContext(research: ResearchResult): Promise<void>;
   recordRenderAttempt(usage: RenderAttemptUsage): Promise<void>;
   recordDocumentCheck(check: DocumentCheck): Promise<void>;

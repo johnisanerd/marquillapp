@@ -72,7 +72,6 @@ export async function runWorkflow(
       );
     }
 
-    await ctx.run.setCurrentStep(step);
     ctx.diagnostics.stepStarted(step);
     emitter.emit({
       type: RunEventType.STEP_STARTED,
@@ -98,12 +97,15 @@ export async function runWorkflow(
   // Persist before announcing: a client that reacts to `run.completed` by
   // re-reading the run must never find it still RUNNING.
   await ctx.run.complete(ctx.meter.creditsUsed);
-  await ctx.meter.commit();
 
+  // Emit is fire-and-forget, so the stream write overlaps the debit below. The
+  // user sees the finished run without waiting on the wallet. Never
+  // Promise.all complete + commit: the run must be persisted first.
   emitter.emit({
     type: RunEventType.RUN_COMPLETED,
     data: { artifactId: input.artifactId, version: input.version },
   });
+  await ctx.meter.commit();
   await emitter.flush();
 
   return state;

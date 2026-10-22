@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto';
 import { Types } from 'mongoose';
 import { RunKind, RunStatus } from '../database/schemas';
 import type { DocumentDiagnostics } from './engine/workflow.types';
-import { FailureCode, WorkflowStep } from './workflow.constants';
+import { FailureCode } from './workflow.constants';
 import { WorkflowRunService } from './workflow-run.service';
 
 // Typed, so an update filter can be written as an object without an `any`.
@@ -222,17 +222,6 @@ describe('WorkflowRunService', () => {
   describe('handleFor', () => {
     it('should bind the runId onto the handle', () => {
       expect(service.handleFor(fixtures.runId).runId).toBe(fixtures.runId);
-    });
-
-    it('should persist the current step at a boundary', async () => {
-      await service
-        .handleFor(fixtures.runId)
-        .setCurrentStep(WorkflowStep.GENERATE);
-
-      expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(
-        { _id: expect.any(Types.ObjectId) },
-        { $set: { currentStep: WorkflowStep.GENERATE } },
-      );
     });
 
     it('should persist the research context so a later refine reuses it', async () => {
