@@ -365,6 +365,8 @@ export interface RunRecordHandle {
  */
 export interface RunDeadlineGuard {
   assertTimeLeft(step: WorkflowStep, before: string): void;
+  /** Milliseconds left before the deadline; `0` once it has passed. */
+  remainingMs(): number;
 }
 
 /**
