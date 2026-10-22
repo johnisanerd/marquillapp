@@ -658,6 +658,16 @@ describe('handleTerminalFailure', () => {
     expect(mocks.logger.error).toHaveBeenCalled();
   });
 
+  it('should not emit run.failed again when the run had already ended', async () => {
+    // A replayed failure: the worker's failed event and the stalled-job
+    // listener can both report the same job.
+    mocks.run.fail.mockResolvedValue('ALREADY_ENDED');
+
+    await expect(handleTerminalFailure(deps, failure)).resolves.toBeNull();
+
+    expect(mocks.emitter.emit).not.toHaveBeenCalled();
+  });
+
   it('should still emit run.failed when marking the run fails', async () => {
     mocks.run.fail.mockRejectedValue(new Error('mongo down'));
 

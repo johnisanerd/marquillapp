@@ -356,8 +356,18 @@ export interface RunRecordHandle {
     candidateSha256: string,
   ): Promise<string | undefined>;
   complete(creditsUsed: number): Promise<void>;
-  fail(failureCode: FailureCode, failureReason: string): Promise<void>;
+  /**
+   * Fails the run only while it is still `RUNNING`, so a replayed failure
+   * neither overwrites the first one nor a completion.
+   */
+  fail(
+    failureCode: FailureCode,
+    failureReason: string,
+  ): Promise<RunFailOutcome>;
 }
+
+/** What `RunRecordHandle.fail` did. */
+export type RunFailOutcome = 'FAILED' | 'ALREADY_ENDED';
 
 /**
  * The job attempt's wall-clock bound (spec §7.5), checked before each DOCUMENT

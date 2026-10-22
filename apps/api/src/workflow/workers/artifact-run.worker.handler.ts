@@ -34,6 +34,7 @@ import type {
   StepContext,
 } from '../engine/workflow.types';
 import { artifactStepHandlers } from '../steps';
+import { STALLED_FAILURE_REASON } from './stalled-failure';
 
 /** The narrow slice of `WorkflowRunService` the worker needs. */
 export interface RunRecordStore {
@@ -256,9 +257,11 @@ export class ArtifactRunProcessor {
     // fresh emitter restarts `seq`, a lesser evil than losing the client's
     // `run.failed`.
     logger.error(`Artifact run ${runId} failed terminally: ${cause}`);
+    // A stalled-out job is unrecoverable, but BullMQ's reason means nothing
+    // to the user.
     const failureReason =
       FAILURE_REASONS[failureCode] ??
-      (isUnrecoverableFailure(error)
+      (isUnrecoverableFailure(error) && error.message !== STALLED_FAILURE_REASON
         ? describeError(error)
         : TEMPORARY_FAILURE_REASON);
 
@@ -276,6 +279,9 @@ export class ArtifactRunProcessor {
         failureReason,
       },
     );
+
+    // The run had already ended, and been described, through another report.
+    if (storedCode === null) return;
 
     if (isDocument) {
       await this.recordDocumentRun(job, runId, await diagnostics(), {

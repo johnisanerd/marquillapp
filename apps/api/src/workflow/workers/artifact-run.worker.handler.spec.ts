@@ -37,6 +37,7 @@ import {
   ArtifactRunProcessor,
   isTerminalJobFailure,
 } from './artifact-run.worker.handler';
+import { STALLED_FAILURE_REASON } from './stalled-failure';
 
 // These POST-run tests never reach RENDER_PDF, so never-called stubs suffice.
 // The DOCUMENT pipeline runs through this processor in
@@ -747,6 +748,33 @@ describe('ArtifactRunProcessor', () => {
       ).toEqual([]);
     });
 
+    it('should emit run.failed once when the same terminal failure is reported twice', async () => {
+      mocks.runHandle.fail
+        .mockResolvedValueOnce('FAILED')
+        .mockResolvedValue('ALREADY_ENDED');
+      const job = makeJob();
+      const error = new UnrecoverableError(STALLED_FAILURE_REASON);
+
+      await Promise.all([
+        processor.onFailed(job, error),
+        processor.onFailed(job, error),
+      ]);
+
+      expect(emittedTypes(mocks.redis)).toEqual(['run.failed']);
+    });
+
+    it('should give the user the temporary-failure reason when the job stalled out', async () => {
+      await processor.onFailed(
+        makeJob(),
+        new UnrecoverableError(STALLED_FAILURE_REASON),
+      );
+
+      expect(mocks.runHandle.fail).toHaveBeenCalledWith(
+        'internal',
+        'Generation is temporarily unavailable. Please try again.',
+      );
+    });
+
     describe('for a DOCUMENT run', () => {
       const documentJob = (attemptsMade: number) =>
         makeJob({
@@ -785,6 +813,14 @@ describe('ArtifactRunProcessor', () => {
           }),
           undefined,
         );
+      });
+
+      it('should record no second set of diagnostics when the run had already ended', async () => {
+        mocks.runHandle.fail.mockResolvedValue('ALREADY_ENDED');
+
+        await processor.onFailed(documentJob(1), secret);
+
+        expect(mocks.runHandle.saveDocumentDiagnostics).not.toHaveBeenCalled();
       });
 
       it('should log the code, not the error text, when the job attempt will be retried', async () => {

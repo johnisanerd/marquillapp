@@ -18,6 +18,7 @@ import type {
   BuildInput,
   DocumentCheck,
   DocumentDiagnostics,
+  RunFailOutcome,
   RunLlmUsage,
   RunRecordHandle,
   SavedResearch,
@@ -189,7 +190,7 @@ export class WorkflowRunService {
           withLlmUsage({ status: RunStatus.COMPLETED, creditsUsed }),
         ),
       fail: (failureCode: FailureCode, failureReason: string) =>
-        this.patch(
+        this.failIfRunning(
           runId,
           withLlmUsage({
             status: RunStatus.FAILED,
@@ -198,6 +199,17 @@ export class WorkflowRunService {
           }),
         ),
     };
+  }
+
+  private async failIfRunning(
+    runId: string,
+    fields: Partial<WorkflowRun>,
+  ): Promise<RunFailOutcome> {
+    const result = await this.workflowRunModel.updateOne(
+      { _id: new Types.ObjectId(runId), status: RunStatus.RUNNING },
+      { $set: fields },
+    );
+    return result.matchedCount === 0 ? 'ALREADY_ENDED' : 'FAILED';
   }
 
   private async patch(
