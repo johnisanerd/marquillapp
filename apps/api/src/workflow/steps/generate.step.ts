@@ -128,6 +128,7 @@ async function generateDocument(
         maxEnvelopeRepairs: draftAllowance,
         ...(refine ? { refine } : {}),
         sessionId: ctx.run.runId,
+        timeLeftMs: ctx.deadline.remainingMs(),
       },
       hooks,
     ),

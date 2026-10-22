@@ -51,6 +51,7 @@ const GENERATION_MODEL = 'test/generation-model';
 const RESEARCH_MODEL = 'test/research-model';
 const TAVILY_API_KEY = 'test/tavily-key';
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+const RESEARCH_TURN_TIMEOUT_MS = 45_000;
 
 const CONFIG: Record<string, string> = {
   GENERATION_MODEL,
@@ -1353,6 +1354,7 @@ describe('AgentRunnerService', () => {
       expect(options).toEqual({
         model: RESEARCH_MODEL,
         max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+        timeoutMs: RESEARCH_TURN_TIMEOUT_MS,
       });
       expect(tools).toEqual([expect.objectContaining({ name: 'searchWeb' })]);
     });
@@ -1379,11 +1381,13 @@ describe('AgentRunnerService', () => {
         expect(call[3]).toEqual({
           model: RESEARCH_MODEL,
           max_tokens: 4096,
+          timeoutMs: RESEARCH_TURN_TIMEOUT_MS,
         });
       }
       expect(completeCalls()[0][2]).toEqual({
         model: RESEARCH_MODEL,
         max_tokens: 4096,
+        timeoutMs: RESEARCH_TURN_TIMEOUT_MS,
       });
     });
 
@@ -1432,6 +1436,7 @@ describe('AgentRunnerService', () => {
         expect(completeWithToolsCalls()[0][3]).toEqual({
           model: RESEARCH_MODEL,
           max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+          timeoutMs: RESEARCH_TURN_TIMEOUT_MS,
         });
       },
     );
@@ -1550,6 +1555,7 @@ describe('AgentRunnerService', () => {
         expect(options).toEqual({
           model: RESEARCH_MODEL,
           max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+          timeoutMs: RESEARCH_TURN_TIMEOUT_MS,
         });
       }
       const anySchema: unknown = expect.any(z.ZodType);
@@ -1639,6 +1645,72 @@ describe('AgentRunnerService', () => {
         for (const options of calls) {
           expect(options.sessionId).toBe('run-1');
         }
+      }
+    });
+
+    it('should cap every research turn at 45 s and give it no deadline', async () => {
+      useService();
+
+      const sites = await optionsByCallSite();
+
+      for (const options of sites.research) {
+        expect(options.timeoutMs).toBe(RESEARCH_TURN_TIMEOUT_MS);
+        expect(options).not.toHaveProperty('deadlineAt');
+      }
+    });
+
+    it('should bound neither the timeout nor a deadline for a POST or POLL generation', async () => {
+      useService();
+
+      const sites = await optionsByCallSite();
+
+      for (const options of sites.generate) {
+        expect(options).not.toHaveProperty('timeoutMs');
+        expect(options).not.toHaveProperty('deadlineAt');
+      }
+    });
+
+    it('should give a draft and a Repair, envelope repairs included, one deadline when the run has time left', async () => {
+      jest.useFakeTimers({ now: 1_000_000 });
+      try {
+        useService();
+        mocks.llmService.complete
+          .mockResolvedValueOnce(completion('not json'))
+          .mockImplementationOnce(() => {
+            // The envelope repair keeps the deadline the call started with.
+            jest.advanceTimersByTime(5_000);
+            return Promise.resolve(
+              completion(
+                JSON.stringify({ title: 't', commentary: 'c', html: HTML }),
+              ),
+            );
+          })
+          .mockResolvedValueOnce(completion('not json'))
+          .mockResolvedValueOnce(completion(JSON.stringify({ html: HTML })));
+
+        await service.generateDocument({ ...draftInput, timeLeftMs: 90_000 });
+        await service.repairDocument({ ...repairInput, timeLeftMs: 30_000 });
+
+        const sent = completeCalls().map(([, , options]) => options!);
+        expect(sent.map((o) => o.deadlineAt)).toEqual([
+          1_090_000, 1_090_000, 1_035_000, 1_035_000,
+        ]);
+        for (const options of sent) {
+          expect(options).not.toHaveProperty('timeoutMs');
+        }
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('should send no deadline for a draft or a Repair when the caller gives no time left', async () => {
+      useService();
+
+      const sites = await optionsByCallSite();
+
+      for (const options of [...sites.draft, ...sites.repair]) {
+        expect(options).not.toHaveProperty('deadlineAt');
+        expect(options).not.toHaveProperty('timeoutMs');
       }
     });
 

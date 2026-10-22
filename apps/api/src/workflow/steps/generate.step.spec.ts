@@ -58,7 +58,10 @@ const makeStep = () => {
     recordModelCall: jest.fn(),
   };
   const emit = jest.fn();
-  const deadline = { assertTimeLeft: jest.fn() };
+  const deadline = {
+    assertTimeLeft: jest.fn(),
+    remainingMs: jest.fn(() => 120_000),
+  };
   const logger = { log: jest.fn() };
   const diagnostics = {
     stepStarted: jest.fn(),
@@ -266,6 +269,7 @@ describe('generateStep', () => {
           includeTitle: true,
           maxEnvelopeRepairs: 1,
           sessionId: 'run-1',
+          timeLeftMs: 120_000,
         },
         expect.anything(),
       );
@@ -414,6 +418,24 @@ describe('generateStep', () => {
         ]);
       });
 
+      it('should bound the draft and each Repair by the time left when each starts', async () => {
+        mockedCheck.mockReturnValueOnce([finding]);
+        mocks.deadline.remainingMs
+          .mockReturnValueOnce(90_000)
+          .mockReturnValueOnce(40_000);
+
+        await generateStep(fixtures.documentState, ctx);
+
+        expect(mocks.agent.generateDocument).toHaveBeenCalledWith(
+          expect.objectContaining({ timeLeftMs: 90_000 }),
+          expect.anything(),
+        );
+        expect(mocks.agent.repairDocument).toHaveBeenCalledWith(
+          expect.objectContaining({ timeLeftMs: 40_000 }),
+          expect.anything(),
+        );
+      });
+
       it('should call no model once it has passed', async () => {
         const passed = new WorkflowError('past the deadline', {
           retryable: true,
@@ -451,6 +473,7 @@ describe('generateStep', () => {
             violations: { violations: [finding], omitted: [] },
             maxEnvelopeRepairs: 1,
             sessionId: 'run-1',
+            timeLeftMs: 120_000,
           },
           expect.anything(),
         );
