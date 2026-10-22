@@ -105,8 +105,13 @@ export async function runWorkflow(
     type: RunEventType.RUN_COMPLETED,
     data: { artifactId: input.artifactId, version: input.version },
   });
-  await ctx.meter.commit();
-  await emitter.flush();
+  try {
+    await ctx.meter.commit();
+  } finally {
+    // The run is already announced, so make sure the event is written even
+    // when the debit rejects.
+    await emitter.flush();
+  }
 
   return state;
 }

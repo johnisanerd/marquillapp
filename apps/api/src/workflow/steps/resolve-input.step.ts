@@ -6,7 +6,7 @@ import { renderPromptFragment } from '../../design-system/prompt-fragment';
 import { sha256Hex } from '../../document-source/sha256';
 import { FailureCode } from '../workflow.constants';
 import { alert, alertSubject } from '../engine/alert';
-import { terminal, transient } from '../engine/workflow.error';
+import { describeError, terminal, transient } from '../engine/workflow.error';
 import type {
   ResolvedDesignSystem,
   RunState,
@@ -145,7 +145,7 @@ async function readKeptCandidate(
   } catch (error: unknown) {
     // Best-effort: R2 is the source of truth.
     ctx.logger.warn(
-      `Reading the kept Candidate Source ${candidateSha256} failed; falling back to R2: ${error instanceof Error ? error.message : String(error)}`,
+      `Reading the kept Candidate Source ${candidateSha256} failed; falling back to R2: ${describeError(error)}`,
     );
   }
   return undefined;

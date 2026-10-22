@@ -18,7 +18,7 @@ import type { Violation } from '../../document-source/violation';
 import { USAGE_KINDS } from '../../feature-gating/credit-meter.constants';
 import { alert, alertSubject, type AlertSubject } from '../engine/alert';
 import { RunEventType } from '../engine/run-event.types';
-import { terminal, transient } from '../engine/workflow.error';
+import { describeError, terminal, transient } from '../engine/workflow.error';
 import type {
   DesignSystemPin,
   DocumentDraftState,
@@ -410,7 +410,7 @@ async function publish(
       return { coverKey: keyOf('cover.png') };
     } catch (error: unknown) {
       return {
-        coverFailure: `upload failed: ${error instanceof Error ? error.message : String(error)}`,
+        coverFailure: `upload failed: ${describeError(error)}`,
       };
     }
   };

@@ -319,6 +319,14 @@ describe('runWorkflow', () => {
       expect(emittedTypes()).toContain(RunEventType.RUN_COMPLETED);
     });
 
+    it('should flush the emitter when the debit commit rejects', async () => {
+      mocks.meter.commit.mockRejectedValue(transient('db down'));
+
+      await expect(runWorkflow(makeInput(), deps)).rejects.toThrow('db down');
+
+      expect(mocks.emitter.flush).toHaveBeenCalledTimes(1);
+    });
+
     it('should not commit when a step fails', async () => {
       (mocks.handlers[GENERATE] as jest.Mock).mockRejectedValue(
         transient('rate limited'),
