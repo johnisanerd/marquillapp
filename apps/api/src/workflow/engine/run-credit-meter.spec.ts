@@ -141,7 +141,7 @@ describe('RunCreditMeter', () => {
       );
     });
 
-    it('should reuse the entitlement it was built with, so the check reads only usage', async () => {
+    it('should read only usage when the meter was built with an entitlement', async () => {
       const entitlement = makeEntitlement();
       ({ meter, mocks } = makeMeter(entitlement));
 

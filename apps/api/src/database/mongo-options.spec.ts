@@ -4,7 +4,7 @@ import { mongoOptionsFrom } from './mongo-options';
 const configOf = (env: Record<string, string>) => new ConfigService(env);
 
 describe('mongoOptionsFrom', () => {
-  it('should default to the pool the app used before it was configurable', () => {
+  it('should default to the previous pool sizes when no pool config is set', () => {
     expect(mongoOptionsFrom(configOf({ MONGO_URI: 'mongodb://h/db' }))).toEqual(
       {
         uri: 'mongodb://h/db',
@@ -15,7 +15,7 @@ describe('mongoOptionsFrom', () => {
     );
   });
 
-  it('should read the pool sizes from config', () => {
+  it('should read the pool sizes when they are set in config', () => {
     const options = mongoOptionsFrom(
       configOf({ MONGO_MAX_POOL_SIZE: '40', MONGO_MIN_POOL_SIZE: '5' }),
     );

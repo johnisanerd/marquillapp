@@ -253,7 +253,7 @@ describe('ArtifactRunProcessor', () => {
       expect(mocks.agent.research).toHaveBeenCalledTimes(1);
     });
 
-    it('should resolve the entitlement once and reuse it for the research check, balance check and debit', async () => {
+    it('should resolve the entitlement once and reuse it when running the research check, balance check and debit', async () => {
       mocks.agent.research.mockResolvedValue({
         findings: 'Found',
         sources: [],

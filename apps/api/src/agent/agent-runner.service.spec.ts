@@ -1648,7 +1648,7 @@ describe('AgentRunnerService', () => {
       }
     });
 
-    it('should cap every research turn at 45 s and give it no deadline', async () => {
+    it('should cap every research turn at 45 s and give it no deadline when the generation is research', async () => {
       useService();
 
       const sites = await optionsByCallSite();
@@ -1659,7 +1659,7 @@ describe('AgentRunnerService', () => {
       }
     });
 
-    it('should bound neither the timeout nor a deadline for a POST or POLL generation', async () => {
+    it('should bound neither the timeout nor a deadline when the generation is POST or POLL', async () => {
       useService();
 
       const sites = await optionsByCallSite();

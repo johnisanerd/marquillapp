@@ -8,20 +8,20 @@ describe('readIntEnv', () => {
     expect(readIntEnv({ K: '  ' }, 'K', { default: 7 })).toBe(7);
   });
 
-  it('should parse a base-10 integer, including 0 and surrounding space', () => {
+  it('should parse a base-10 integer when the value is 0 or has surrounding space', () => {
     expect(readIntEnv({ K: '25' }, 'K', { default: 7 })).toBe(25);
     expect(readIntEnv({ K: ' 3 ' }, 'K', { default: 7 })).toBe(3);
     expect(readIntEnv({ K: '0' }, 'K', { default: 7 })).toBe(0);
   });
 
-  it('should read from a ConfigService', () => {
+  it('should read the value when the source is a ConfigService', () => {
     const config = new ConfigService({ K: '12' });
     expect(readIntEnv(config, 'K', { default: 7 })).toBe(12);
     expect(readIntEnv(config, 'MISSING', { default: 7 })).toBe(7);
   });
 
   it.each(['abc', '1.5', '-1', '1e3', '0x10', '10px', 'NaN'])(
-    'should reject %s, naming the key and the value',
+    'should throw naming the key and the value when the value is %s',
     (value) => {
       expect(() => readIntEnv({ K: value }, 'K', { default: 7 })).toThrow(
         new RegExp(`K.*${value}`),
@@ -29,7 +29,7 @@ describe('readIntEnv', () => {
     },
   );
 
-  it('should enforce min and max', () => {
+  it('should throw when the value is outside min and max', () => {
     expect(() => readIntEnv({ K: '0' }, 'K', { default: 7, min: 1 })).toThrow(
       /K.*"0".*>= 1/,
     );

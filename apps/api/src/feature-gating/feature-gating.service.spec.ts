@@ -932,7 +932,7 @@ describe('FeatureGatingService', () => {
       jest.useRealTimers();
     });
 
-    it('should serve the tier from the cache, but re-read the subscription, within the TTL', async () => {
+    it('should serve the tier from the cache but re-read the subscription when within the TTL', async () => {
       const { service, mocks } = makeService();
       wireReads(mocks, { subscription: activeSubscription, paidTier });
       const userId = new Types.ObjectId().toString();
@@ -944,7 +944,7 @@ describe('FeatureGatingService', () => {
       expect(readsOf(mocks)).toEqual({ subscription: 2, tier: 1, usage: 0 });
     });
 
-    it('should re-read the tier once the TTL has passed', async () => {
+    it('should re-read the tier when the TTL has passed', async () => {
       const { service, mocks } = makeService();
       wireReads(mocks, { defaultTier: freeTier });
       const userId = new Types.ObjectId().toString();
@@ -985,7 +985,7 @@ describe('FeatureGatingService', () => {
       expect(readsOf(mocks)).toEqual({ subscription: 2, tier: 2, usage: 0 });
     });
 
-    it('should never cache a missing default tier', async () => {
+    it('should not cache the default tier when it is missing', async () => {
       const { service, mocks } = makeService();
       wireReads(mocks, {});
       const userId = new Types.ObjectId().toString();
@@ -1000,7 +1000,7 @@ describe('FeatureGatingService', () => {
       expect(mocks.tierModel.findOne).toHaveBeenCalledTimes(2);
     });
 
-    it('should keep paid and default tiers apart in the cache', async () => {
+    it('should keep paid and default tiers apart when both are cached', async () => {
       const { service, mocks } = makeService();
       wireReads(mocks, { defaultTier: freeTier, paidTier });
 
@@ -1065,7 +1065,7 @@ describe('FeatureGatingService', () => {
       expect(readsOf(mocks)).toEqual({ subscription: 1, tier: 0, usage: 1 });
     });
 
-    it('should read usage in the period of the subscription it resolved', async () => {
+    it('should read usage in the subscription period when a subscription resolves', async () => {
       const { service, mocks } = makeService();
       wireReads(mocks, { subscription: activeSubscription, paidTier });
       const userId = new Types.ObjectId().toString();
@@ -1079,7 +1079,7 @@ describe('FeatureGatingService', () => {
       });
     });
 
-    it('should return the entitlement it checked', async () => {
+    it('should return the checked entitlement when the launch is allowed', async () => {
       const { service, mocks } = makeService();
       wireReads(mocks, { defaultTier: freeTier });
 
@@ -1102,7 +1102,7 @@ describe('FeatureGatingService', () => {
       expect(mocks.usageModel.findOne).not.toHaveBeenCalled();
     });
 
-    it('should reject an exhausted balance', async () => {
+    it('should reject when the credit balance is exhausted', async () => {
       const { service, mocks } = makeService();
       wireReads(mocks, { defaultTier: freeTier, creditsUsed: 120 });
 
@@ -1174,7 +1174,7 @@ describe('FeatureGatingService', () => {
       expect(mocks.subscriptionModel.findOne).toHaveBeenCalledTimes(2);
     });
 
-    it('should debit into the passed period without reading the subscription', async () => {
+    it('should debit into the passed period without reading the subscription when a period is supplied', async () => {
       const { service, mocks } = makeService();
       wireReads(mocks, {});
       const userId = new Types.ObjectId().toString();

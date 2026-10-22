@@ -85,7 +85,7 @@ describe('OpenRouterStrategy', () => {
       );
     });
 
-    it("should turn the SDK's own retries off", () => {
+    it("should turn the SDK's own retries off when the client is built", () => {
       expect(OpenRouterClient).toHaveBeenCalledWith(
         expect.objectContaining({ retryConfig: { strategy: 'none' } }),
       );
@@ -892,7 +892,7 @@ describe('OpenRouterStrategy', () => {
 
     afterEach(() => random.mockRestore());
 
-    it('should pass an abort signal to the SDK on every try', async () => {
+    it('should pass an abort signal to the SDK when making each try', async () => {
       send.mockResolvedValue(ok);
 
       await strategy.complete(user);
@@ -954,7 +954,7 @@ describe('OpenRouterStrategy', () => {
       expect(send).toHaveBeenCalledTimes(2);
     });
 
-    it('should retry a provider error that arrived after 200 OK', async () => {
+    it('should retry when a provider error arrives after 200 OK', async () => {
       send
         .mockRejectedValueOnce(
           Object.assign(new Error('Response validation failed'), {
@@ -1000,7 +1000,7 @@ describe('OpenRouterStrategy', () => {
       expect(jest.getTimerCount()).toBe(0);
     });
 
-    it('should not retry a terminal error', async () => {
+    it('should not retry when the error is terminal', async () => {
       send.mockRejectedValue(httpError(401));
 
       const error = await strategy.complete(user).catch((e: unknown) => e);
@@ -1049,7 +1049,7 @@ describe('OpenRouterStrategy', () => {
       expect(error).toMatchObject({ statusCode: 429 });
     });
 
-    it('should end a hung call at the per-try timeout and run the next try', async () => {
+    it('should end the call at the per-try timeout and run the next try when a call hangs', async () => {
       send.mockImplementationOnce(hang).mockResolvedValueOnce(ok);
 
       const outcome = settle(strategy.complete(user));
@@ -1080,7 +1080,7 @@ describe('OpenRouterStrategy', () => {
       });
     });
 
-    it('should cut the per-try timeout to the time left before the deadline', async () => {
+    it('should cut the per-try timeout to the time left when the deadline is nearer', async () => {
       ({ strategy } = makeStrategy({ OPENROUTER_MAX_ATTEMPTS: '1' }));
       send.mockImplementationOnce(hang);
 
@@ -1134,7 +1134,7 @@ describe('OpenRouterStrategy', () => {
       expect((await outcome).error).toMatchObject({ retryable: false });
     });
 
-    it('should retry completeWithTools too', async () => {
+    it('should retry when completeWithTools fails with a retryable error', async () => {
       send
         .mockRejectedValueOnce(httpError(502))
         .mockResolvedValueOnce({ choices: [{ message: { content: 'done' } }] });

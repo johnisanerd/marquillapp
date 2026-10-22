@@ -252,7 +252,7 @@ describe('WorkflowRunService', () => {
       expect(service.handleFor(fixtures.runId).runId).toBe(fixtures.runId);
     });
 
-    it('should persist the research context and its usage so a later refine and a job retry reuse them', async () => {
+    it('should persist the research context and its usage when research completes', async () => {
       const research = { findings: 'f', sources: [] };
       const usage = [{ kind: 'web_search' as const, amount: 1 }];
 
@@ -275,7 +275,7 @@ describe('WorkflowRunService', () => {
         return { select };
       };
 
-      it('should read only the research and its usage from the run record', async () => {
+      it('should read only the research and its usage when loading the saved research', async () => {
         const research = { findings: 'f', sources: [] };
         const usage = [{ kind: 'web_search' as const, amount: 1 }];
         const { select } = stubStored({
@@ -300,7 +300,7 @@ describe('WorkflowRunService', () => {
         ).resolves.toBeUndefined();
       });
 
-      it('should return undefined for research saved before its usage was, so it is searched and billed again', async () => {
+      it('should return undefined when research was saved before its usage was', async () => {
         stubStored({ researchContext: { findings: 'f', sources: [] } });
 
         await expect(

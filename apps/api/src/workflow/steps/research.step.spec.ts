@@ -94,7 +94,7 @@ describe('researchStep', () => {
     expect(mocks.run.saveResearchContext).toHaveBeenCalledWith(research, []);
   });
 
-  it('should save the usage it recorded alongside the research so a retry can bill it again', async () => {
+  it('should save the recorded usage alongside the research when research completes', async () => {
     mocks.agent.research.mockImplementation(
       (_input: unknown, hooks: AgentHooks) => {
         hooks.onUsage?.(turnUsage({ cost: 0.03 }));
@@ -194,7 +194,7 @@ describe('researchStep', () => {
       });
     });
 
-    it('should return the saved research without calling the agent', async () => {
+    it('should return the saved research without calling the agent when research was saved', async () => {
       await expect(researchStep(fixtures.state, ctx)).resolves.toEqual({
         research,
       });
@@ -203,7 +203,7 @@ describe('researchStep', () => {
       expect(mocks.run.saveResearchContext).not.toHaveBeenCalled();
     });
 
-    it('should record the saved usage on the meter so the retry bills like an unretried run', async () => {
+    it('should record the saved usage on the meter when research was saved', async () => {
       await researchStep(fixtures.state, ctx);
 
       expect(mocks.meter.record.mock.calls).toEqual(
@@ -211,7 +211,7 @@ describe('researchStep', () => {
       );
     });
 
-    it('should still emit the number of sources found', async () => {
+    it('should emit the number of sources found when research was saved', async () => {
       await researchStep(fixtures.state, ctx);
 
       expect(mocks.emit).toHaveBeenCalledWith({

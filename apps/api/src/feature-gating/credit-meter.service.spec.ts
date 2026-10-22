@@ -203,7 +203,7 @@ describe('CreditMeterService', () => {
       );
     });
 
-    it('should pass a resolved entitlement through, so the gate does not re-read it', async () => {
+    it('should pass a resolved entitlement through without re-reading it when one is supplied', async () => {
       const entitlement = { tier: null, period: {} } as never;
 
       await service.assertBalance(fixtures.userId, entitlement);
@@ -236,7 +236,7 @@ describe('CreditMeterService', () => {
       );
     });
 
-    it('should pass a resolved period through, so the gate does not re-read it', async () => {
+    it('should pass a resolved period through without re-reading it when one is supplied', async () => {
       const period = {
         periodStart: new Date('2026-03-01T00:00:00.000Z'),
         periodEnd: new Date('2026-04-01T00:00:00.000Z'),

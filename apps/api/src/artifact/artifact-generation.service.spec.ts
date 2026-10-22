@@ -528,7 +528,7 @@ describe('ArtifactGenerationService', () => {
       expect(gated.reads()).toBe(3);
     });
 
-    it('should make 2 gating reads for the next launch, the tier being cached', async () => {
+    it('should make 2 gating reads for the next launch when the tier is cached', async () => {
       const gated = makeGatedService();
       await gated.service.launchInitialRun(userId, fixtures.dto);
       const before = gated.reads();
