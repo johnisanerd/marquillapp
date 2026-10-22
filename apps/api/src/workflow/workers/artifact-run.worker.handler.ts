@@ -96,10 +96,23 @@ export class ArtifactRunProcessor {
   async process(job: Job<BuildInput>): Promise<void> {
     const runId = this.runIdOf(job);
     const { logger, redis, creditMeter, runs } = this.deps;
+    const run = runs.handleFor(runId);
+
+    // One entitlement per job attempt: the research check, the balance check
+    // and the debit all reuse it, so gating costs a subscription read and a
+    // usage read. Resolved per job attempt, since a plan can change while a
+    // retry waits.
+    const [entitlement, prior] = await Promise.all([
+      this.deps.featureGating.resolveEntitlement(job.data.userId),
+      this.readPriorDiagnostics(job, run),
+    ]);
 
     if (job.data.kind === RunKind.INITIAL && job.data.withResearch) {
       try {
-        await this.deps.featureGating.assertResearchAccess(job.data.userId);
+        await this.deps.featureGating.assertResearchAccess(
+          job.data.userId,
+          entitlement,
+        );
       } catch (error: unknown) {
         if (error instanceof FeatureGateForbiddenException) {
           throw new UnrecoverableError(
@@ -111,7 +124,6 @@ export class ArtifactRunProcessor {
     }
 
     const emitter = new RunEventEmitter(redis, runId, logger);
-    const run = runs.handleFor(runId);
     await this.recordQueueWait(job, run);
     const subject = alertSubject(runId, job.data);
     const meter = new RunCreditMeter(
@@ -120,13 +132,14 @@ export class ArtifactRunProcessor {
       subject,
       (event) => emitter.emit(event),
       logger,
+      entitlement,
     );
     // `attemptsMade` counts the job attempts that already failed.
     const diagnostics = new DocumentRunDiagnostics({
       runId,
       input: job.data,
       jobAttempt: job.attemptsMade + 1,
-      prior: await this.readPriorDiagnostics(job, run),
+      prior,
     });
     this.jobAttempts.set(runId, { emitter, meter, diagnostics, run });
 
