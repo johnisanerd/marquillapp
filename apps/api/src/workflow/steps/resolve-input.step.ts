@@ -142,8 +142,11 @@ async function readKeptCandidate(
     if (text !== undefined && sha256Hex(text) === candidateSha256) {
       return text;
     }
-  } catch {
+  } catch (error: unknown) {
     // Best-effort: R2 is the source of truth.
+    ctx.logger.warn(
+      `Reading the kept Candidate Source ${candidateSha256} failed; falling back to R2: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
   return undefined;
 }

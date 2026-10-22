@@ -35,7 +35,7 @@ const makeStep = () => {
   };
   const designSystems = { resolve: jest.fn() };
   const objects = { get: jest.fn() };
-  const logger = { error: jest.fn() };
+  const logger = { error: jest.fn(), warn: jest.fn() };
   const ctx = {
     artifacts,
     run,
@@ -350,6 +350,19 @@ describe('resolveInputStep', () => {
           expect(mocks.objects.get).toHaveBeenCalledTimes(1);
         },
       );
+
+      it('should log a warning when the Mongo read rejects', async () => {
+        mocks.run.readAcceptedCandidateText.mockRejectedValue(
+          new Error('mongo down'),
+        );
+        mocks.objects.get.mockResolvedValue(Buffer.from(CANDIDATE, 'utf8'));
+
+        await resolveInputStep(refineState(), ctx);
+
+        expect(mocks.logger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('mongo down'),
+        );
+      });
 
       it('should start the candidate read and the research read before either resolves', async () => {
         let releaseCandidate: (text: string) => void = () => undefined;
