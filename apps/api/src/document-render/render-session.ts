@@ -23,6 +23,12 @@ import {
 export interface RenderSessionOptions {
   /** Overrides `RENDER_SESSION_DEADLINE_MS`; for tests. */
   deadlineMs?: number;
+  /**
+   * Asked once the probe and the font pass have measured, before the cover. A
+   * session that is going to Repair anyway returns `true` to skip the cover;
+   * the PDF is still printed, because its page count can add a finding.
+   */
+  skipCover?: (facts: RenderFacts) => boolean;
 }
 
 /** `cover.png` of page 1, or why it could not be captured (§5.1 step 7). */
@@ -76,7 +82,8 @@ const reasonOf = (error: unknown): string =>
  * metered render. In order: JavaScript off; requests allowlisted to the Google
  * Fonts stylesheet and font files, with every refusal recorded; print media
  * and a viewport at the page size; `setContent` until `load`; the probe; the
- * font pass; a best-effort `cover.png` of page 1; `page.pdf` and its page
+ * font pass; a best-effort `cover.png` of page 1 (skipped when `skipCover` says the
+ * session is going to Repair); `page.pdf` and its page
  * count. One deadline covers all of it, connect included.
  *
  * It times each of those phases (`RenderPhase`), so a session that hits the
@@ -180,14 +187,21 @@ export async function renderDocumentSession(
 
     // 7. Best effort: a cover that fails to capture never blocks READY.
     clock.enter('cover');
-    try {
-      const png = await page.screenshot({
-        type: 'png',
-        clip: { x: 0, y: 0, width, height },
-      });
-      cover = { ok: true, png };
-    } catch (error) {
-      cover = { ok: false, reason: reasonOf(error) };
+    if (options.skipCover?.(facts)) {
+      cover = {
+        ok: false,
+        reason: 'skipped: the probe already has findings',
+      };
+    } else {
+      try {
+        const png = await page.screenshot({
+          type: 'png',
+          clip: { x: 0, y: 0, width, height },
+        });
+        cover = { ok: true, png };
+      } catch (error) {
+        cover = { ok: false, reason: reasonOf(error) };
+      }
     }
 
     // 8. Print, then count what printed.
