@@ -50,6 +50,7 @@ import {
 } from './prompts';
 import {
   createSearchWebTool,
+  resolveSearchWebOptions,
   type SearchWebOutput,
   type WebSearchResult,
 } from './tools';
@@ -158,6 +159,10 @@ export class AgentRunnerService implements AgentRunner {
     );
     this.searchWebTool = createSearchWebTool(
       this.configService.getOrThrow<string>('TAVILY_API_KEY'),
+      resolveSearchWebOptions(
+        this.configService.get<string | number>('TAVILY_TIMEOUT_S'),
+        this.configService.get<string>('TAVILY_SEARCH_DEPTH'),
+      ),
     );
   }
 

@@ -49,6 +49,7 @@ Use the Dockerfile. It is the setup verified to work: both processes were booted
 
 - **API service:** set Root Directory to the repository root (`/`) and add the variable `RAILWAY_DOCKERFILE_PATH=apps/api/Dockerfile`. The image's default command, `node dist/main.js`, starts the HTTP server. `PORT` is honoured.
 - **Worker service:** same repository, root, and Dockerfile, with the start command `node dist/workflow/workers/workflow.worker.js`.
+- **Worker variables (optional):** `TAVILY_TIMEOUT_S` (seconds, default `10`) and `TAVILY_SEARCH_DEPTH` (`advanced` default, or `basic`) tune the research agent's web search. Only the worker reads them.
 - **Watch paths** (both services): `apps/api/**`, `bun.lock`, `package.json`, `bunfig.toml`
 - **If you don't use Docker, two things are required:**
   1. `nest build` must run under **Node**, not Bun. Under Bun, `src/...` imports are left unresolved in `dist/`, and the app crashes with `Cannot find module 'src/common/HelperFn'`.
