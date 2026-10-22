@@ -22,7 +22,7 @@ export interface Tool<I = unknown, O = unknown> {
   execute: (input: I) => Promise<O>;
 }
 
-export interface AgentRunConfig {
+export interface AgentRunConfig extends SessionAffinity {
   system: string;
   messages: LLMMessage[];
   tools: Tool[];
@@ -31,8 +31,6 @@ export interface AgentRunConfig {
   model?: string;
   /** Sent on every turn and the closing call. Unset sends none. */
   reasoningEffort?: ReasoningEffort;
-  /** Sent on every turn and the closing call. Unset sends none. */
-  sessionId?: string;
 }
 
 /**

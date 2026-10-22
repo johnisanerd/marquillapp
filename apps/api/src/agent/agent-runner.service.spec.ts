@@ -1530,7 +1530,7 @@ describe('AgentRunnerService', () => {
       ({ service, mocks, fixtures } = makeService({ maxSteps: 1, env }));
     };
 
-    it('should drive two calls through each call site', async () => {
+    it('should make two calls at each call site when every first answer needs a repair', async () => {
       useService();
 
       const sites = await optionsByCallSite();

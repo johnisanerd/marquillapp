@@ -180,7 +180,7 @@ export class AgentRunnerService implements AgentRunner {
       'DOCUMENT_GENERATION_MAX_OUTPUT_TOKENS',
       DEFAULT_DOCUMENT_MAX_OUTPUT_TOKENS,
     );
-    // An unknown effort throws here, which fails boot in the API and the worker.
+    // An unknown effort throws here, which fails worker boot (the API never builds this service).
     this.researchReasoningEffort = this.readEffort('RESEARCH_REASONING_EFFORT');
     this.generationReasoningEffort = this.readEffort(
       'GENERATION_REASONING_EFFORT',
@@ -388,7 +388,7 @@ export class AgentRunnerService implements AgentRunner {
         : {}),
     };
 
-    const request = {
+    const options = {
       model: this.generationModel,
       ...callOptions(this.generationReasoningEffort, input.sessionId),
     };
@@ -397,7 +397,7 @@ export class AgentRunnerService implements AgentRunner {
       messages,
       hooks,
       schema,
-      request,
+      options,
     );
 
     let validationError: unknown;
@@ -425,7 +425,7 @@ export class AgentRunnerService implements AgentRunner {
       ],
       hooks,
       schema,
-      request,
+      options,
     );
 
     try {

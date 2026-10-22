@@ -121,9 +121,7 @@ Copy `.env.example` and fill in real values. Required keys not in the example:
 Optional keys in the example (worker):
 - `TAVILY_TIMEOUT_S` (default `10`) — per-search Tavily timeout in seconds
 - `TAVILY_SEARCH_DEPTH` (default `advanced`, or `basic`) — Tavily search depth
-
-Optional keys in the example (API and worker):
-- `RESEARCH_REASONING_EFFORT`, `GENERATION_REASONING_EFFORT`, `DOCUMENT_DRAFT_REASONING_EFFORT`, `DOCUMENT_REPAIR_REASONING_EFFORT` (default unset: no effort sent) — reasoning effort for each call site of `AgentRunnerService`; an unknown value fails boot. Which efforts a model accepts differs per model, so check the model before setting one (see `.env.example`).
+- `RESEARCH_REASONING_EFFORT`, `GENERATION_REASONING_EFFORT`, `DOCUMENT_DRAFT_REASONING_EFFORT`, `DOCUMENT_REPAIR_REASONING_EFFORT` (default unset: no effort sent) — reasoning effort for each call site of `AgentRunnerService`; an unknown value fails worker boot. Which efforts a model accepts differs per model, so check the model before setting one (see `.env.example`).
 
 ## Production
 

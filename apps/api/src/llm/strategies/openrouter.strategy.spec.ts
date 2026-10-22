@@ -790,7 +790,7 @@ describe('OpenRouterStrategy', () => {
       expect(request).not.toHaveProperty('reasoning');
     });
 
-    it('should report the model from complete', async () => {
+    it('should report the model when complete gets one from the provider', async () => {
       send.mockResolvedValue({ ...ok, model: 'openai/gpt-5-mini-x' });
 
       const result = await strategy.complete(user);
@@ -798,7 +798,7 @@ describe('OpenRouterStrategy', () => {
       expect(result.model).toBe('openai/gpt-5-mini-x');
     });
 
-    it('should report the model from a length-truncated complete', async () => {
+    it('should report the model when complete is truncated at the token cap', async () => {
       send.mockResolvedValue({
         choices: [{ message: { content: null }, finishReason: 'length' }],
         usage,
@@ -811,7 +811,7 @@ describe('OpenRouterStrategy', () => {
       expect(result.model).toBe('openai/gpt-5-mini-x');
     });
 
-    it('should report the model from completeWithTools', async () => {
+    it('should report the model when completeWithTools gets one from the provider', async () => {
       send.mockResolvedValue({
         choices: [{ message: {} }],
         usage,
