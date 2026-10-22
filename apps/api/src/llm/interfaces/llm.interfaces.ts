@@ -74,6 +74,8 @@ export interface Usage {
 export interface CompletionResult {
   text: string;
   usage: Usage;
+  /** The model the provider says answered, when it says. */
+  model?: string;
   /**
    * Why the provider stopped, when it says (`stop`, `length`, ...). `length`
    * means the output hit `max_tokens` and is truncated.
@@ -85,12 +87,33 @@ export interface ToolTurnResult {
   text?: string;
   toolCalls: ToolCall[];
   usage: Usage;
+  /** The model the provider says answered, when it says. */
+  model?: string;
 }
+
+/**
+ * Reasoning effort a call may ask for. Which values a model accepts differs
+ * per model, so callers send one only when it was configured.
+ */
+export const REASONING_EFFORTS = [
+  'max',
+  'xhigh',
+  'high',
+  'medium',
+  'low',
+  'minimal',
+  'none',
+] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export type CompletionOptions = {
   model?: string;
   max_tokens?: number;
   temperature?: number;
+  /** Sent as `reasoning: { effort }`. Unset sends nothing. */
+  reasoningEffort?: ReasoningEffort;
+  /** Groups a run's calls for provider cache affinity. Unset sends nothing. */
+  sessionId?: string;
   responseSchema?: {
     name: string;
     schema: ZodType;
