@@ -90,6 +90,8 @@ export const isTerminalJobFailure = (job: Job, error: Error): boolean =>
  */
 export class ArtifactRunProcessor {
   private readonly jobAttempts = new Map<string, JobAttemptState>();
+  /** `onFailed` calls still running, so a shutdown can wait for them. */
+  private readonly inFlightFailures = new Set<Promise<void>>();
 
   constructor(private readonly deps: ArtifactRunDeps) {}
 
@@ -183,7 +185,33 @@ export class ArtifactRunProcessor {
    * A DOCUMENT run's error text can quote model output, so it is kept in the
    * run's diagnostics and never logged (spec §11.6); the logs get its code.
    */
-  async onFailed(job: Job<BuildInput>, error: Error): Promise<void> {
+  onFailed(job: Job<BuildInput>, error: Error): Promise<void> {
+    const handling = this.handleFailedJobAttempt(job, error);
+    const tracked = handling.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.inFlightFailures.add(tracked);
+    void tracked.then(() => this.inFlightFailures.delete(tracked));
+    return handling;
+  }
+
+  /**
+   * Resolves once every `onFailed` call has settled, including any that start
+   * while it waits. The worker's shutdown awaits this after closing the
+   * BullMQ workers, so a terminal failure is written before Mongo and Redis
+   * close.
+   */
+  async idle(): Promise<void> {
+    while (this.inFlightFailures.size > 0) {
+      await Promise.all(this.inFlightFailures);
+    }
+  }
+
+  private async handleFailedJobAttempt(
+    job: Job<BuildInput>,
+    error: Error,
+  ): Promise<void> {
     const { logger } = this.deps;
     const isDocument = job.data.type === ArtifactType.DOCUMENT;
     // A DOCUMENT failure carries a stable code with its own client wording;

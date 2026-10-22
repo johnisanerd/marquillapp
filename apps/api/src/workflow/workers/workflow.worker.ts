@@ -35,12 +35,18 @@ import {
   handleMediaUploadJobExhausted,
   processMediaUploadJob,
 } from './media-upload.worker.handler';
+import {
+  installWorkerShutdown,
+  readWorkerShutdownTimeoutMs,
+} from './worker-shutdown';
 
 async function bootstrapWorker() {
   const logger = new Logger(
     bootstrapWorker.name.charAt(0).toUpperCase() +
       bootstrapWorker.name.slice(1),
   );
+  // Read before the app boots, so a bad value fails fast.
+  const shutdownTimeoutMs = readWorkerShutdownTimeoutMs(process.env);
   logger.log('Bootstrapping workflow context...');
   const app = await NestFactory.createApplicationContext(WorkerModule);
 
@@ -91,7 +97,7 @@ async function bootstrapWorker() {
     artifactRuns.onFailed(job, error).catch((err) => logger.error(err));
   });
 
-  new Worker(
+  const scheduleWorker = new Worker(
     SCHEDULE_QUEUE_NAME,
     async (job: Job) => {
       try {
@@ -128,7 +134,7 @@ async function bootstrapWorker() {
     },
   );
 
-  new Worker(
+  const avatarRefreshWorker = new Worker(
     LINKEDIN_AVATAR_REFRESH_QUEUE_NAME,
     async (job: Job) => {
       try {
@@ -158,7 +164,7 @@ async function bootstrapWorker() {
     },
   );
 
-  new Worker(
+  const emailWorker = new Worker(
     EMAIL_QUEUE_NAME,
     async (job: Job) => {
       try {
@@ -207,6 +213,26 @@ async function bootstrapWorker() {
     logger.warn(
       `Media upload job ${job.id} failed (attempt ${job.attemptsMade}/${job.opts.attempts ?? 1}): ${error.message}`,
     );
+  });
+
+  installWorkerShutdown({
+    signals: process,
+    closables: [
+      workflowWorker,
+      scheduleWorker,
+      avatarRefreshWorker,
+      emailWorker,
+      mediaUploadWorker,
+    ],
+    idle: () => artifactRuns.idle(),
+    app,
+    exit: (code) => process.exit(code),
+    timeoutMs: shutdownTimeoutMs,
+    timers: {
+      setTimeout: (callback, ms) => setTimeout(callback, ms),
+      clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+    },
+    logger,
   });
 }
 bootstrapWorker();

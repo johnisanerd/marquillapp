@@ -958,4 +958,44 @@ describe('ArtifactRunProcessor', () => {
       expect(mocks.logger.error).toHaveBeenCalled();
     });
   });
+
+  describe('idle', () => {
+    it('should resolve at once when no failure handler is in flight', async () => {
+      await expect(processor.idle()).resolves.toBeUndefined();
+    });
+
+    it('should wait for an in-flight failure handler when one is running', async () => {
+      let release!: () => void;
+      mocks.runHandle.fail.mockReturnValue(
+        new Promise<void>((resolve) => (release = resolve)),
+      );
+      let idle = false;
+
+      const failed = processor.onFailed(
+        makeJob(),
+        new UnrecoverableError('nope'),
+      );
+      const waiting = processor.idle().then(() => (idle = true));
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(idle).toBe(false);
+
+      release();
+      await failed;
+      await waiting;
+      expect(idle).toBe(true);
+    });
+
+    it('should resolve when an in-flight failure handler rejects', async () => {
+      mocks.runs.handleFor.mockImplementation(() => {
+        throw new Error('no handle');
+      });
+
+      const failed = expect(
+        processor.onFailed(makeJob(), new UnrecoverableError('nope')),
+      ).rejects.toThrow('no handle');
+
+      await expect(processor.idle()).resolves.toBeUndefined();
+      await failed;
+    });
+  });
 });
