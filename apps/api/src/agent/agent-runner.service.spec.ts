@@ -91,6 +91,8 @@ interface ServiceConfig {
   researchMaxOutputTokens?: string | number;
   generationMaxOutputTokens?: string | number;
   documentMaxOutputTokens?: string | number;
+  /** Any other optional key, e.g. a `*_REASONING_EFFORT`. */
+  env?: Record<string, string>;
 }
 
 const makeService = ({
@@ -99,6 +101,7 @@ const makeService = ({
   researchMaxOutputTokens,
   generationMaxOutputTokens,
   documentMaxOutputTokens,
+  env = {},
 }: ServiceConfig = {}) => {
   const llmService = { complete: jest.fn(), completeWithTools: jest.fn() };
   const configService = {
@@ -117,7 +120,7 @@ const makeService = ({
       if (key === 'DOCUMENT_GENERATION_MAX_OUTPUT_TOKENS') {
         return documentMaxOutputTokens;
       }
-      return undefined;
+      return env[key];
     }),
   };
 
@@ -1432,5 +1435,296 @@ describe('AgentRunnerService', () => {
         });
       },
     );
+  });
+
+  describe('per-call reasoning effort and session affinity', () => {
+    const EFFORT_KEYS = [
+      'RESEARCH_REASONING_EFFORT',
+      'GENERATION_REASONING_EFFORT',
+      'DOCUMENT_DRAFT_REASONING_EFFORT',
+      'DOCUMENT_REPAIR_REASONING_EFFORT',
+    ] as const;
+    type EffortKey = (typeof EFFORT_KEYS)[number];
+
+    // The call sites each key owns, named after the four runner entry points.
+    const SITES_OF: Record<EffortKey, CallSite> = {
+      RESEARCH_REASONING_EFFORT: 'research',
+      GENERATION_REASONING_EFFORT: 'generate',
+      DOCUMENT_DRAFT_REASONING_EFFORT: 'draft',
+      DOCUMENT_REPAIR_REASONING_EFFORT: 'repair',
+    };
+    type CallSite = 'research' | 'generate' | 'draft' | 'repair';
+
+    const HTML = '<!doctype html><html><body></body></html>';
+    const draftInput: DocumentGenerateInput = {
+      prompt: 'Three fixes for documents',
+      fragment: 'FRAGMENT',
+      includeTitle: true,
+      maxEnvelopeRepairs: 1,
+    };
+    const repairInput: DocumentRepairInput = {
+      fragment: 'FRAGMENT',
+      includeTitle: true,
+      candidate: HTML,
+      violations: { violations: [], omitted: [] },
+      maxEnvelopeRepairs: 1,
+    };
+
+    /**
+     * Drives every LLM call site the runner has, each through its repair
+     * path: research to its cap plus the closing call, generate plus its Zod
+     * repair, and a draft and a Repair each plus an envelope repair. Returns
+     * the options each call sent, grouped by entry point.
+     */
+    const optionsByCallSite = async (
+      sessionId?: string,
+    ): Promise<Record<CallSite, CompletionOptions[]>> => {
+      const session = sessionId === undefined ? {} : { sessionId };
+      const sent = (): CompletionOptions[] =>
+        completeCalls().map(([, , options]) => options!);
+
+      tavilySearch.mockResolvedValue({ results: [] });
+      mocks.llmService.completeWithTools.mockResolvedValue(
+        toolTurn([{ id: 'c', name: 'searchWeb', input: { query: 'x' } }]),
+      );
+      mocks.llmService.complete.mockResolvedValue(completion('synthesis'));
+      await service.research({
+        prompt: 'topic',
+        type: ArtifactType.POST,
+        ...session,
+      });
+      const research = [
+        ...completeWithToolsCalls().map(([, , , options]) => options!),
+        ...sent(),
+      ];
+
+      mocks.llmService.complete
+        .mockReset()
+        .mockResolvedValueOnce(completion('not json'))
+        .mockResolvedValueOnce(completion(generatedJson({ commentary: 'ok' })));
+      await service.generate({ ...fixtures.input, ...session });
+      const generate = sent();
+
+      mocks.llmService.complete
+        .mockReset()
+        .mockResolvedValueOnce(completion('not json'))
+        .mockResolvedValueOnce(
+          completion(
+            JSON.stringify({ title: 't', commentary: 'c', html: HTML }),
+          ),
+        );
+      await service.generateDocument({ ...draftInput, ...session });
+      const draft = sent();
+
+      mocks.llmService.complete
+        .mockReset()
+        .mockResolvedValueOnce(completion('not json'))
+        .mockResolvedValueOnce(completion(JSON.stringify({ html: HTML })));
+      await service.repairDocument({ ...repairInput, ...session });
+      const repair = sent();
+
+      return { research, generate, draft, repair };
+    };
+
+    const useService = (env: Record<string, string> = {}): void => {
+      ({ service, mocks, fixtures } = makeService({ maxSteps: 1, env }));
+    };
+
+    it('should drive two calls through each call site', async () => {
+      useService();
+
+      const sites = await optionsByCallSite();
+
+      expect(sites.research).toHaveLength(2);
+      expect(sites.generate).toHaveLength(2);
+      expect(sites.draft).toHaveLength(2);
+      expect(sites.repair).toHaveLength(2);
+    });
+
+    it("should send today's options when every effort key is unset and no session is given", async () => {
+      useService();
+
+      const sites = await optionsByCallSite();
+
+      for (const options of sites.research) {
+        expect(options).toEqual({
+          model: RESEARCH_MODEL,
+          max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
+        });
+      }
+      const anySchema: unknown = expect.any(z.ZodType);
+      for (const site of ['generate', 'draft', 'repair'] as const) {
+        for (const options of sites[site]) {
+          expect(options).toEqual({
+            model: GENERATION_MODEL,
+            max_tokens: site === 'generate' ? DEFAULT_MAX_OUTPUT_TOKENS : 16384,
+            responseSchema: {
+              name: 'artifact_generation',
+              schema: anySchema,
+            },
+          });
+        }
+      }
+    });
+
+    it.each(EFFORT_KEYS)(
+      'should send the effort on its own call sites only when %s is set',
+      async (key) => {
+        useService({ [key]: 'low' });
+
+        const sites = await optionsByCallSite();
+
+        for (const [site, calls] of Object.entries(sites)) {
+          for (const options of calls) {
+            if (site === SITES_OF[key]) {
+              expect(options.reasoningEffort).toBe('low');
+            } else {
+              expect(options).not.toHaveProperty('reasoningEffort');
+            }
+          }
+        }
+      },
+    );
+
+    it('should send each call site its own effort when every key is set', async () => {
+      useService({
+        RESEARCH_REASONING_EFFORT: 'minimal',
+        GENERATION_REASONING_EFFORT: 'medium',
+        DOCUMENT_DRAFT_REASONING_EFFORT: 'low',
+        DOCUMENT_REPAIR_REASONING_EFFORT: 'none',
+      });
+
+      const sites = await optionsByCallSite();
+
+      expect(sites.research.map((o) => o.reasoningEffort)).toEqual([
+        'minimal',
+        'minimal',
+      ]);
+      expect(sites.generate.map((o) => o.reasoningEffort)).toEqual([
+        'medium',
+        'medium',
+      ]);
+      expect(sites.draft.map((o) => o.reasoningEffort)).toEqual(['low', 'low']);
+      expect(sites.repair.map((o) => o.reasoningEffort)).toEqual([
+        'none',
+        'none',
+      ]);
+    });
+
+    it('should treat an empty effort key as unset', async () => {
+      useService({ GENERATION_REASONING_EFFORT: '' });
+
+      const sites = await optionsByCallSite();
+
+      for (const options of sites.generate) {
+        expect(options).not.toHaveProperty('reasoningEffort');
+      }
+    });
+
+    it.each(EFFORT_KEYS)(
+      'should fail construction naming %s when its value is not an effort',
+      (key) => {
+        expect(() => makeService({ env: { [key]: 'turbo' } })).toThrow(
+          `${key} must be one of`,
+        );
+      },
+    );
+
+    it('should forward the session id on every call when one is given', async () => {
+      useService();
+
+      const sites = await optionsByCallSite('run-1');
+
+      for (const calls of Object.values(sites)) {
+        for (const options of calls) {
+          expect(options.sessionId).toBe('run-1');
+        }
+      }
+    });
+
+    it('should send no session id when none is given', async () => {
+      useService();
+
+      const sites = await optionsByCallSite();
+
+      for (const calls of Object.values(sites)) {
+        for (const options of calls) {
+          expect(options).not.toHaveProperty('sessionId');
+        }
+      }
+    });
+  });
+
+  describe('the model reported to onUsage', () => {
+    const ANSWERED_BY = 'openai/gpt-5.4-20260301';
+
+    it('should report the model the provider says answered a generation turn', async () => {
+      mocks.llmService.complete.mockResolvedValue({
+        ...completion(generatedJson({ commentary: 'ok' })),
+        model: ANSWERED_BY,
+      });
+      const onUsage = jest.fn();
+
+      await service.generate(fixtures.input, { onUsage });
+
+      expect(onUsage).toHaveBeenCalledWith(
+        expect.objectContaining({ model: ANSWERED_BY }),
+      );
+    });
+
+    it('should report the requested model when the provider does not say', async () => {
+      mocks.llmService.complete.mockResolvedValue(
+        completion(generatedJson({ commentary: 'ok' })),
+      );
+      const onUsage = jest.fn();
+
+      await service.generate(fixtures.input, { onUsage });
+
+      expect(onUsage).toHaveBeenCalledWith(
+        expect.objectContaining({ model: GENERATION_MODEL }),
+      );
+    });
+
+    it('should report the answering model for research turns and the closing call', async () => {
+      ({ service, mocks, fixtures } = makeService({ maxSteps: 1 }));
+      tavilySearch.mockResolvedValue({ results: [] });
+      mocks.llmService.completeWithTools.mockResolvedValue({
+        ...toolTurn([{ id: 'c', name: 'searchWeb', input: { query: 'x' } }]),
+        model: 'openai/gpt-5-mini-a',
+      });
+      mocks.llmService.complete.mockResolvedValue({
+        ...completion('synthesis'),
+        model: 'openai/gpt-5-mini-b',
+      });
+      const onUsage = jest.fn();
+
+      await service.research(
+        { prompt: 'topic', type: ArtifactType.POST },
+        { onUsage },
+      );
+
+      expect(
+        onUsage.mock.calls.map(([turn]: [{ model: string }]) => turn.model),
+      ).toEqual(['openai/gpt-5-mini-a', 'openai/gpt-5-mini-b']);
+    });
+
+    it('should report the requested research model when the provider does not say', async () => {
+      ({ service, mocks, fixtures } = makeService({ maxSteps: 1 }));
+      tavilySearch.mockResolvedValue({ results: [] });
+      mocks.llmService.completeWithTools.mockResolvedValue(
+        toolTurn([{ id: 'c', name: 'searchWeb', input: { query: 'x' } }]),
+      );
+      mocks.llmService.complete.mockResolvedValue(completion('synthesis'));
+      const onUsage = jest.fn();
+
+      await service.research(
+        { prompt: 'topic', type: ArtifactType.POST },
+        { onUsage },
+      );
+
+      expect(
+        onUsage.mock.calls.map(([turn]: [{ model: string }]) => turn.model),
+      ).toEqual([RESEARCH_MODEL, RESEARCH_MODEL]);
+    });
   });
 });
