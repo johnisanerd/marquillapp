@@ -116,6 +116,34 @@ describe('WorkflowRunService', () => {
     });
   });
 
+  describe('readAcceptedCandidateText', () => {
+    const query = (result: unknown) => ({
+      lean: () => ({ exec: () => Promise.resolve(result) }),
+    });
+
+    it('should look the text up by hash and ACCEPTED role', async () => {
+      mocks.candidateSourceModel.findOne.mockReturnValue(
+        query({ candidate: '<html/>' }),
+      );
+
+      await expect(
+        service.handleFor(fixtures.runId).readAcceptedCandidateText('abc'),
+      ).resolves.toBe('<html/>');
+      expect(mocks.candidateSourceModel.findOne).toHaveBeenCalledWith(
+        { candidateSha256: 'abc', role: 'ACCEPTED' },
+        { candidate: 1 },
+      );
+    });
+
+    it('should return undefined when none is kept', async () => {
+      mocks.candidateSourceModel.findOne.mockReturnValue(query(null));
+
+      await expect(
+        service.handleFor(fixtures.runId).readAcceptedCandidateText('abc'),
+      ).resolves.toBeUndefined();
+    });
+  });
+
   describe('getLatestCompletedResearch', () => {
     it('should return cached research from the latest completed run when one exists', async () => {
       const research = {

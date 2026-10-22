@@ -222,6 +222,7 @@ const makeRun = () => {
       .fn<Promise<void>, [DocumentCheck]>()
       .mockResolvedValue(undefined),
     getLatestCompletedResearch: jest.fn(),
+    readAcceptedCandidateText: jest.fn(),
     complete: jest.fn().mockResolvedValue(undefined),
     fail: jest.fn().mockResolvedValue(undefined),
     recordQueueWait: jest.fn().mockResolvedValue(undefined),

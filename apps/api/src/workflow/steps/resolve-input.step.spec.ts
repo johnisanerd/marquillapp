@@ -28,7 +28,11 @@ const makeStep = () => {
     readVersion: jest.fn(),
     readRefineInput: jest.fn(),
   };
-  const run = { runId: 'run-1', getLatestCompletedResearch: jest.fn() };
+  const run = {
+    runId: 'run-1',
+    getLatestCompletedResearch: jest.fn(),
+    readAcceptedCandidateText: jest.fn(),
+  };
   const designSystems = { resolve: jest.fn() };
   const objects = { get: jest.fn() };
   const logger = { error: jest.fn() };
@@ -299,6 +303,76 @@ describe('resolveInputStep', () => {
           feedback: 'Make it warmer',
         });
         mocks.run.getLatestCompletedResearch.mockResolvedValue(undefined);
+        mocks.run.readAcceptedCandidateText.mockResolvedValue(undefined);
+      });
+
+      it('should read the kept Candidate Source from Mongo without touching R2', async () => {
+        mocks.run.readAcceptedCandidateText.mockResolvedValue(CANDIDATE);
+
+        await expect(
+          resolveInputStep(refineState(), ctx),
+        ).resolves.toMatchObject({ baseCandidate: CANDIDATE });
+        expect(mocks.run.readAcceptedCandidateText).toHaveBeenCalledWith(
+          priorContent.document.candidateSha256,
+        );
+        expect(mocks.objects.get).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        [
+          'misses',
+          () =>
+            mocks.run.readAcceptedCandidateText.mockResolvedValue(undefined),
+        ],
+        [
+          'does not match the hash',
+          () =>
+            mocks.run.readAcceptedCandidateText.mockResolvedValue(
+              '<p>other</p>',
+            ),
+        ],
+        [
+          'errors',
+          () =>
+            mocks.run.readAcceptedCandidateText.mockRejectedValue(
+              new Error('mongo down'),
+            ),
+        ],
+      ])(
+        'should fall back to R2 when the Mongo read %s',
+        async (_case, arrange) => {
+          arrange();
+          mocks.objects.get.mockResolvedValue(Buffer.from(CANDIDATE, 'utf8'));
+
+          await expect(
+            resolveInputStep(refineState(), ctx),
+          ).resolves.toMatchObject({ baseCandidate: CANDIDATE });
+          expect(mocks.objects.get).toHaveBeenCalledTimes(1);
+        },
+      );
+
+      it('should start the candidate read and the research read before either resolves', async () => {
+        let releaseCandidate: (text: string) => void = () => undefined;
+        let releaseResearch: (r: unknown) => void = () => undefined;
+        mocks.run.readAcceptedCandidateText.mockReturnValue(
+          new Promise<string>((resolve) => (releaseCandidate = resolve)),
+        );
+        mocks.run.getLatestCompletedResearch.mockReturnValue(
+          new Promise((resolve) => (releaseResearch = resolve)),
+        );
+
+        const pending = resolveInputStep(refineState(), ctx);
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(mocks.run.readAcceptedCandidateText).toHaveBeenCalledTimes(1);
+        expect(mocks.run.getLatestCompletedResearch).toHaveBeenCalledTimes(1);
+
+        releaseCandidate(CANDIDATE);
+        releaseResearch({ findings: 'f', sources: [] });
+        await expect(pending).resolves.toMatchObject({
+          baseCandidate: CANDIDATE,
+          research: { findings: 'f', sources: [] },
+        });
       });
 
       it("should seed the base's Candidate Source once it matches its hash", async () => {

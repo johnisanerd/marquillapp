@@ -89,6 +89,23 @@ export class WorkflowRunService {
   }
 
   /**
+   * The text of any run's ACCEPTED Candidate Source with this hash, or
+   * `undefined` when none is kept (it expires). The caller verifies the hash.
+   */
+  private async readAcceptedCandidateText(
+    candidateSha256: string,
+  ): Promise<string | undefined> {
+    const doc = await this.candidateSourceModel
+      .findOne(
+        { candidateSha256, role: RunCandidateSourceRole.ACCEPTED },
+        { candidate: 1 },
+      )
+      .lean<{ candidate: string }>()
+      .exec();
+    return doc?.candidate;
+  }
+
+  /**
    * The runs behind the given `(artifact, version)` Attempts, oldest first, so
    * a caller that keys them by target keeps the newest when a version somehow
    * has several. A pair with no run record yet (the moment between appending
@@ -161,6 +178,8 @@ export class WorkflowRunService {
       recordModelCall: (usage: Usage) => {
         llmUsage = addModelCall(llmUsage, usage);
       },
+      readAcceptedCandidateText: (candidateSha256: string) =>
+        this.readAcceptedCandidateText(candidateSha256),
       complete: (creditsUsed: number) =>
         this.patch(
           runId,

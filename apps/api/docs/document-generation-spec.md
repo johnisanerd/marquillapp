@@ -640,6 +640,11 @@ base's `candidate.html` and commentary.
 | `candidate.html` missing or hash mismatch | **terminal** + alert `artifact.source_missing` |
 | Mongo or cache read fails | transient |
 
+A DOCUMENT REFINE reads the base's Candidate Source from `run_candidate_sources` by
+`{ candidateSha256, role: 'ACCEPTED' }` first, in parallel with the cached research read, and trusts
+it only if it matches the frozen hash. A miss, a mismatch or a read error falls back to the R2 read
+above, so the failure classes in the table are unchanged.
+
 All of these precede any spend.
 
 ### 7.5 Model output and truncation (#139)
