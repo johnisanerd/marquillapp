@@ -30,6 +30,7 @@ const makeStep = () => {
   const agent = { generate: jest.fn(), research: jest.fn() };
   const meter = { record: jest.fn() };
   const run = {
+    runId: 'run-1',
     saveResearchContext: jest.fn().mockResolvedValue(undefined),
     recordModelCall: jest.fn(),
   };
@@ -67,7 +68,7 @@ describe('researchStep', () => {
     });
   });
 
-  it('should call the agent with the prompt, type, and style preset', async () => {
+  it('should call the agent with the prompt, type, style preset, and the run id as the session', async () => {
     mocks.agent.research.mockResolvedValue(research);
 
     await researchStep(fixtures.state, ctx);
@@ -77,6 +78,7 @@ describe('researchStep', () => {
         prompt: 'Why staff engineers should write more',
         type: 'POST',
         stylePreset: 'contrarian',
+        sessionId: 'run-1',
       },
       expect.anything(),
     );

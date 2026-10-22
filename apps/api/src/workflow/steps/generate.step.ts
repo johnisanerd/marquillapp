@@ -44,6 +44,7 @@ export const generateStep: StepHandler = async (state, ctx) => {
         stylePreset,
         research: state.research,
         refine: state.refine,
+        sessionId: ctx.run.runId,
       },
       meteredHooks(ctx),
     );
@@ -126,6 +127,7 @@ async function generateDocument(
         includeTitle,
         maxEnvelopeRepairs: draftAllowance,
         ...(refine ? { refine } : {}),
+        sessionId: ctx.run.runId,
       },
       hooks,
     ),

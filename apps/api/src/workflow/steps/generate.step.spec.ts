@@ -52,6 +52,7 @@ const makeStep = () => {
   };
   const meter = { record: jest.fn() };
   const run = {
+    runId: 'run-1',
     recordDocumentCheck: jest.fn().mockResolvedValue(undefined),
     readAcceptedCandidate: jest.fn().mockResolvedValue(undefined),
     recordModelCall: jest.fn(),
@@ -130,7 +131,7 @@ describe('generateStep', () => {
     });
   });
 
-  it('should pass the research and refine slots through to the agent', async () => {
+  it('should pass the research and refine slots, and the run id as the session, to the agent', async () => {
     mocks.agent.generate.mockResolvedValue({
       content: { commentary: 'ok' },
     });
@@ -149,6 +150,7 @@ describe('generateStep', () => {
         stylePreset: 'contrarian',
         research,
         refine,
+        sessionId: 'run-1',
       },
       expect.anything(),
     );
@@ -263,6 +265,7 @@ describe('generateStep', () => {
           fragment: 'FRAGMENT',
           includeTitle: true,
           maxEnvelopeRepairs: 1,
+          sessionId: 'run-1',
         },
         expect.anything(),
       );
@@ -447,6 +450,7 @@ describe('generateStep', () => {
             candidate: draft.html,
             violations: { violations: [finding], omitted: [] },
             maxEnvelopeRepairs: 1,
+            sessionId: 'run-1',
           },
           expect.anything(),
         );
