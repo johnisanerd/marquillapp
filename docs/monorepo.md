@@ -51,6 +51,7 @@ Use the Dockerfile. It is the setup verified to work: both processes were booted
 - **Worker service:** same repository, root, and Dockerfile, with the start command `node dist/workflow/workers/workflow.worker.js`.
 - **Worker variables (optional):** `TAVILY_TIMEOUT_S` (seconds, default `10`) and `TAVILY_SEARCH_DEPTH` (`advanced` default, or `basic`) tune the research agent's web search. Only the worker reads them.
 - **Tier cache (both services, optional):** `FEATURE_TIER_CACHE_TTL_MS` (default `60000`; `0` disables) is how long each process caches tier documents. After re-seeding tiers, allow this long for the change to apply.
+- **OpenRouter retries (worker, optional):** `OPENROUTER_TIMEOUT_MS` (per-try timeout, default 240000), `OPENROUTER_MAX_ATTEMPTS` (default 3; `1` turns retrying off), `OPENROUTER_RETRY_BASE_MS` (default 1000), `OPENROUTER_RETRY_MAX_DELAY_MS` (default 15000) and `OPENROUTER_RETRY_BUDGET_MS` (most time one call may sleep between tries, default 45000). The worker makes the LLM calls; the API reads them too at boot, so an invalid value fails either service.
 - **Mongo pool:** set `MONGO_MAX_POOL_SIZE` (default 10) and `MONGO_MIN_POOL_SIZE` (default 2) per service; invalid values fail boot. The worker's max pool must be at least its total worker concurrency + 10.
 - **Watch paths** (both services): `apps/api/**`, `bun.lock`, `package.json`, `bunfig.toml`
 - **If you don't use Docker, two things are required:**
