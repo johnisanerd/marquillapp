@@ -123,6 +123,9 @@ Optional keys in the example (worker):
 - `TAVILY_SEARCH_DEPTH` (default `advanced`, or `basic`) — Tavily search depth
 - `RESEARCH_REASONING_EFFORT`, `GENERATION_REASONING_EFFORT`, `DOCUMENT_DRAFT_REASONING_EFFORT`, `DOCUMENT_REPAIR_REASONING_EFFORT` (default unset: no effort sent) — reasoning effort for each call site of `AgentRunnerService`; an unknown value fails worker boot. Which efforts a model accepts differs per model, so check the model before setting one (see `.env.example`).
 
+Optional integer settings are read with `readIntEnv` (`src/common/env.ts`): unset or blank gives the default, and anything that is not a base-10 integer within bounds fails boot, naming the key.
+- `MONGO_MAX_POOL_SIZE` (default `10`, min 1), `MONGO_MIN_POOL_SIZE` (default `2`, must not exceed max) — Mongo connection pool, per process (`mongoOptionsFrom` in `src/database/mongo-options.ts`). **Sizing rule:** the worker's pool must be at least its total worker concurrency + 10.
+
 ## Production
 
 - The same build runs two processes: `node dist/main.js` (HTTP) and `node dist/workflow/workers/workflow.worker.js` (worker).
