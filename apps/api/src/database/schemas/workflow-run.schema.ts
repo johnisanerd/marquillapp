@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 import { User } from './user.schema';
 import { Artifact } from './artifact.schema';
+import type { UsageRecord } from '../../feature-gating/credit-meter.constants';
 import type { ResearchResult } from '../../agent/agent-runner.interface';
 import type { RenderAttemptUsage } from '../../document-render/render-usage.types';
 // Type-only, and to the leaf module rather than the engine barrel: the engine
@@ -71,6 +72,12 @@ export class WorkflowRun extends Document {
   // paying for a second Tavily pass.
   @Prop({ type: Object })
   researchContext?: ResearchResult;
+
+  // What researching recorded on the credit meter (each LLM turn and search),
+  // saved with `researchContext`. A job retry replays it so the retried run
+  // bills like an unretried one without searching again.
+  @Prop({ type: [Object] })
+  researchUsage?: UsageRecord[];
 
   @Prop({ type: [Object], default: [] })
   renderAttempts: RenderAttemptUsage[];

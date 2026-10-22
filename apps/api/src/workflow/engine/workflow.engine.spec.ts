@@ -50,6 +50,7 @@ describe('runWorkflow', () => {
     const run = {
       runId: '665f1b2c3d4e5f6a7b8c9d03',
       saveResearchContext: jest.fn().mockResolvedValue(undefined),
+      readResearchContext: jest.fn().mockResolvedValue(undefined),
       complete: jest.fn().mockResolvedValue(undefined),
       fail: jest.fn().mockResolvedValue(undefined),
     };

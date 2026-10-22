@@ -252,15 +252,61 @@ describe('WorkflowRunService', () => {
       expect(service.handleFor(fixtures.runId).runId).toBe(fixtures.runId);
     });
 
-    it('should persist the research context so a later refine reuses it', async () => {
+    it('should persist the research context and its usage so a later refine and a job retry reuse them', async () => {
       const research = { findings: 'f', sources: [] };
+      const usage = [{ kind: 'web_search' as const, amount: 1 }];
 
-      await service.handleFor(fixtures.runId).saveResearchContext(research);
+      await service
+        .handleFor(fixtures.runId)
+        .saveResearchContext(research, usage);
 
       expect(mocks.workflowRunModel.updateOne).toHaveBeenCalledWith(
         { _id: expect.any(Types.ObjectId) },
-        { $set: { researchContext: research } },
+        { $set: { researchContext: research, researchUsage: usage } },
       );
+    });
+
+    describe('readResearchContext', () => {
+      const stubStored = (stored: unknown) => {
+        const exec = jest.fn().mockResolvedValue(stored);
+        const lean = jest.fn().mockReturnValue({ exec });
+        const select = jest.fn().mockReturnValue({ lean });
+        mocks.workflowRunModel.findById.mockReturnValue({ select });
+        return { select };
+      };
+
+      it('should read only the research and its usage from the run record', async () => {
+        const research = { findings: 'f', sources: [] };
+        const usage = [{ kind: 'web_search' as const, amount: 1 }];
+        const { select } = stubStored({
+          researchContext: research,
+          researchUsage: usage,
+        });
+
+        await expect(
+          service.handleFor(fixtures.runId).readResearchContext(),
+        ).resolves.toEqual({ research, usage });
+        expect(select).toHaveBeenCalledWith({
+          researchContext: 1,
+          researchUsage: 1,
+        });
+      });
+
+      it('should return undefined when the run has no saved research', async () => {
+        stubStored({});
+
+        await expect(
+          service.handleFor(fixtures.runId).readResearchContext(),
+        ).resolves.toBeUndefined();
+      });
+
+      it('should return undefined for research saved before its usage was, so it is searched and billed again', async () => {
+        stubStored({ researchContext: { findings: 'f', sources: [] } });
+
+        await expect(
+          service.handleFor(fixtures.runId).readResearchContext(),
+        ).resolves.toBeUndefined();
+      });
     });
 
     it('should append auditable Browserless attempts without overwriting retries', async () => {

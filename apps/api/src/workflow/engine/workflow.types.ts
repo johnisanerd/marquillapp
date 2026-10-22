@@ -307,10 +307,22 @@ export interface RunLlmUsage {
   llmMs: number;
 }
 
+/** Research a run finished, and the usage it recorded while doing so. */
+export interface SavedResearch {
+  research: ResearchResult;
+  usage: UsageRecord[];
+}
+
 /** The durable run record, narrowed to what the engine and its steps write. */
 export interface RunRecordHandle {
   readonly runId: string;
-  saveResearchContext(research: ResearchResult): Promise<void>;
+  /** `usage` is what researching recorded, kept so a job retry can bill it again. */
+  saveResearchContext(
+    research: ResearchResult,
+    usage: UsageRecord[],
+  ): Promise<void>;
+  /** The research an earlier job attempt of this run finished, with its usage. */
+  readResearchContext(): Promise<SavedResearch | undefined>;
   recordRenderAttempt(usage: RenderAttemptUsage): Promise<void>;
   recordDocumentCheck(check: DocumentCheck): Promise<void>;
   saveAcceptedCandidate(accepted: AcceptedCandidate): Promise<void>;

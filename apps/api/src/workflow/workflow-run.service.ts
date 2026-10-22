@@ -10,6 +10,7 @@ import {
   type StoredAcceptedCandidate,
 } from '../database/schemas';
 import { sha256Hex } from '../document-source/sha256';
+import type { UsageRecord } from '../feature-gating/credit-meter.constants';
 import type { ResearchResult } from '../agent/agent-runner.interface';
 import type { RenderAttemptUsage } from '../document-render/render-usage.types';
 import type {
@@ -19,6 +20,7 @@ import type {
   DocumentDiagnostics,
   RunLlmUsage,
   RunRecordHandle,
+  SavedResearch,
 } from './engine/workflow.types';
 import type { Usage } from '../llm/interfaces';
 import {
@@ -156,8 +158,9 @@ export class WorkflowRunService {
 
     return {
       runId,
-      saveResearchContext: (research: ResearchResult) =>
-        this.patch(runId, { researchContext: research }),
+      saveResearchContext: (research: ResearchResult, usage: UsageRecord[]) =>
+        this.patch(runId, { researchContext: research, researchUsage: usage }),
+      readResearchContext: () => this.readResearchContext(runId),
       recordRenderAttempt: (usage: RenderAttemptUsage) =>
         this.appendRenderAttempt(runId, usage),
       recordDocumentCheck: (check: DocumentCheck) =>
@@ -222,6 +225,24 @@ export class WorkflowRunService {
     );
     const stored: StoredAcceptedCandidate = { ...accepted, candidateSha256 };
     await this.patch(runId, { acceptedCandidate: stored });
+  }
+
+  private async readResearchContext(
+    runId: string,
+  ): Promise<SavedResearch | undefined> {
+    const run = await this.workflowRunModel
+      .findById(runId)
+      .select({ researchContext: 1, researchUsage: 1 })
+      .lean<{
+        researchContext?: ResearchResult;
+        researchUsage?: UsageRecord[];
+      }>()
+      .exec();
+    // Research saved before its usage was cannot be billed again, so it is
+    // searched afresh rather than reused for free.
+    if (!run?.researchContext || !run.researchUsage) return undefined;
+
+    return { research: run.researchContext, usage: run.researchUsage };
   }
 
   /**

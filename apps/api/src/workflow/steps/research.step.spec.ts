@@ -3,6 +3,7 @@ import type {
   AgentTurnUsage,
   ResearchResult,
 } from '../../agent/agent-runner.interface';
+import type { UsageRecord } from '../../feature-gating/credit-meter.constants';
 import { RunEventType } from '../engine/run-event.types';
 import type { RunState, StepContext } from '../engine/workflow.types';
 import { researchStep } from './research.step';
@@ -32,6 +33,7 @@ const makeStep = () => {
   const run = {
     runId: 'run-1',
     saveResearchContext: jest.fn().mockResolvedValue(undefined),
+    readResearchContext: jest.fn().mockResolvedValue(undefined),
     recordModelCall: jest.fn(),
   };
   const emit = jest.fn();
@@ -89,7 +91,28 @@ describe('researchStep', () => {
 
     await researchStep(fixtures.state, ctx);
 
-    expect(mocks.run.saveResearchContext).toHaveBeenCalledWith(research);
+    expect(mocks.run.saveResearchContext).toHaveBeenCalledWith(research, []);
+  });
+
+  it('should save the usage it recorded alongside the research so a retry can bill it again', async () => {
+    mocks.agent.research.mockImplementation(
+      (_input: unknown, hooks: AgentHooks) => {
+        hooks.onUsage?.(turnUsage({ cost: 0.03 }));
+        hooks.onToolCall?.({ name: 'searchWeb' });
+        return Promise.resolve(research);
+      },
+    );
+
+    await researchStep(fixtures.state, ctx);
+
+    expect(mocks.run.saveResearchContext).toHaveBeenCalledWith(research, [
+      {
+        kind: 'llm',
+        amount: 0.03,
+        detail: { model: 'test/research-model', totalTokens: 150 },
+      },
+      { kind: 'web_search', amount: 1 },
+    ]);
   });
 
   it('should record each LLM turn as an llm usage and each search as a web_search', async () => {
@@ -151,5 +174,50 @@ describe('researchStep', () => {
     await expect(researchStep(fixtures.state, ctx)).rejects.toBe(error);
     expect(mocks.run.saveResearchContext).not.toHaveBeenCalled();
     expect(mocks.emit).not.toHaveBeenCalled();
+  });
+
+  describe('when an earlier attempt already saved the research', () => {
+    const savedUsage: UsageRecord[] = [
+      {
+        kind: 'llm',
+        amount: 0.03,
+        detail: { model: 'test/research-model', totalTokens: 150 },
+      },
+      { kind: 'web_search', amount: 1 },
+      { kind: 'llm', amount: 0.01 },
+    ];
+
+    beforeEach(() => {
+      mocks.run.readResearchContext.mockResolvedValue({
+        research,
+        usage: savedUsage,
+      });
+    });
+
+    it('should return the saved research without calling the agent', async () => {
+      await expect(researchStep(fixtures.state, ctx)).resolves.toEqual({
+        research,
+      });
+
+      expect(mocks.agent.research).not.toHaveBeenCalled();
+      expect(mocks.run.saveResearchContext).not.toHaveBeenCalled();
+    });
+
+    it('should record the saved usage on the meter so the retry bills like an unretried run', async () => {
+      await researchStep(fixtures.state, ctx);
+
+      expect(mocks.meter.record.mock.calls).toEqual(
+        savedUsage.map((usage) => [usage]),
+      );
+    });
+
+    it('should still emit the number of sources found', async () => {
+      await researchStep(fixtures.state, ctx);
+
+      expect(mocks.emit).toHaveBeenCalledWith({
+        type: RunEventType.STEP_PROGRESS,
+        data: { step: 'RESEARCH', sourcesFound: 2 },
+      });
+    });
   });
 });
