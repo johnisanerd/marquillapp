@@ -71,7 +71,7 @@ Queue producers (`WorkflowQueue`, `ScheduleQueue`, etc.) live in `src/workflow/`
 
 ### Feature gating
 
-`src/feature-gating/FeatureGatingService` enforces tier-based limits on `credits`, `scheduled_posts`, and `connected_accounts`. It resolves the user's active tier by checking `Subscription` (Paddle-managed) with fallback to the default `Tier`. Usage is tracked in the `Usage` collection keyed by `(user_id, feature, periodStart)`, and artifact runs settle LLM and web-search cost through `CreditMeterService`.
+`src/feature-gating/FeatureGatingService` enforces tier-based limits on `credits`, `scheduled_posts`, and `connected_accounts`. `resolveEntitlement` reads `Subscription` (Paddle-managed) once and returns the tier, with fallback to the default `Tier`, and the usage period from the same decision; tiers are cached in process (`FEATURE_TIER_CACHE_TTL_MS`). Callers that already resolved an entitlement pass it on: a launch gates through `assertLaunch`, and the worker resolves it once per job attempt for the research check and `RunCreditMeter`. Usage is tracked in the `Usage` collection keyed by `(user_id, feature, periodStart)`, and artifact runs settle LLM and web-search cost through `CreditMeterService`.
 
 `SubscriptionAccessGuard` runs on protected routes to attach `entitlementTier`, `entitlementSource`, and `subscriptionStatus` to the request object.
 
@@ -125,6 +125,7 @@ Optional keys in the example (worker):
 
 Optional integer settings are read with `readIntEnv` (`src/common/env.ts`): unset or blank gives the default, and anything that is not a base-10 integer within bounds fails boot, naming the key.
 - `MONGO_MAX_POOL_SIZE` (default `10`, min 1), `MONGO_MIN_POOL_SIZE` (default `2`, must not exceed max) — Mongo connection pool, per process (`mongoOptionsFrom` in `src/database/mongo-options.ts`). **Sizing rule:** the worker's pool must be at least its total worker concurrency + 10.
+- `FEATURE_TIER_CACHE_TTL_MS` (default `60000`; `0` disables) — API and worker. How long `FeatureGatingService` caches a tier document in process. Tiers change only through the seed script, so a re-seed applies within this window; the subscription is never cached.
 
 ## Production
 

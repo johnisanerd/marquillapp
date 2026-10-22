@@ -50,6 +50,7 @@ Use the Dockerfile. It is the setup verified to work: both processes were booted
 - **API service:** set Root Directory to the repository root (`/`) and add the variable `RAILWAY_DOCKERFILE_PATH=apps/api/Dockerfile`. The image's default command, `node dist/main.js`, starts the HTTP server. `PORT` is honoured.
 - **Worker service:** same repository, root, and Dockerfile, with the start command `node dist/workflow/workers/workflow.worker.js`.
 - **Worker variables (optional):** `TAVILY_TIMEOUT_S` (seconds, default `10`) and `TAVILY_SEARCH_DEPTH` (`advanced` default, or `basic`) tune the research agent's web search. Only the worker reads them.
+- **Tier cache (both services, optional):** `FEATURE_TIER_CACHE_TTL_MS` (default `60000`; `0` disables) is how long each process caches tier documents. After re-seeding tiers, allow this long for the change to apply.
 - **Mongo pool:** set `MONGO_MAX_POOL_SIZE` (default 10) and `MONGO_MIN_POOL_SIZE` (default 2) per service; invalid values fail boot. The worker's max pool must be at least its total worker concurrency + 10.
 - **Watch paths** (both services): `apps/api/**`, `bun.lock`, `package.json`, `bunfig.toml`
 - **If you don't use Docker, two things are required:**
