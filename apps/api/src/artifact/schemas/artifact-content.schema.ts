@@ -134,9 +134,20 @@ export const documentContentSchema = z.object({
  * What the model writes for a DOCUMENT (§7.5): the Candidate Source as `html`,
  * and the commentary that introduces it. `title` is added on INITIAL runs.
  */
+const candidateHtmlSchema = z.string().min(1, 'html must not be empty');
+
 export const documentDraftSchema = z.object({
   commentary: commentarySchema,
-  html: z.string().min(1, 'html must not be empty'),
+  html: candidateHtmlSchema,
+});
+
+/**
+ * What the model writes for a Repair (§7.2): the Candidate Source alone. A
+ * Repair's title and commentary would be thrown away, so it is not asked for
+ * them.
+ */
+export const documentRepairSchema = z.object({
+  html: candidateHtmlSchema,
 });
 
 export type DocumentDraft = z.infer<typeof documentDraftSchema> & {

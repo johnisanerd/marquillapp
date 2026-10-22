@@ -7,6 +7,7 @@ import {
   dedupePollOptions,
   DocumentDraft,
   documentDraftSchemaFor,
+  documentRepairSchema,
   generationSchemaFor,
 } from '../artifact/schemas';
 import { LLMProvider, MessageRole } from '../llm/interfaces';
@@ -407,7 +408,10 @@ export class AgentRunnerService implements AgentRunner {
           content: buildDocumentGenerationUserPrompt(input),
         },
       ],
-      input,
+      {
+        schema: documentDraftSchemaFor(input.includeTitle),
+        maxEnvelopeRepairs: input.maxEnvelopeRepairs,
+      },
       hooks,
     );
 
@@ -420,8 +424,8 @@ export class AgentRunnerService implements AgentRunner {
   /**
    * One Repair (spec §7.2): a fresh two-message call whose system message is
    * byte-identical to the draft's, and whose user message is the Candidate
-   * Source and its bounded violations. The model still answers in the draft's
-   * JSON shape, but only `html` is kept.
+   * Source and its bounded violations. The model answers with `{ html }`
+   * only: a Repair's title and commentary would be thrown away.
    */
   async repairDocument(
     input: DocumentRepairInput,
@@ -445,7 +449,10 @@ export class AgentRunnerService implements AgentRunner {
           ),
         },
       ],
-      input,
+      {
+        schema: documentRepairSchema,
+        maxEnvelopeRepairs: input.maxEnvelopeRepairs,
+      },
       hooks,
     );
 
@@ -460,18 +467,17 @@ export class AgentRunnerService implements AgentRunner {
    * An invalid envelope gets one Zod repair turn when the caller's Repair
    * budget allows it, and is final when it does not.
    */
-  private async completeDocument(
+  private async completeDocument<T>(
     call: 'draft' | 'Repair',
     messages: LLMMessage[],
     {
-      includeTitle,
+      schema,
       maxEnvelopeRepairs,
-    }: { includeTitle: boolean; maxEnvelopeRepairs: number },
+    }: { schema: ZodType<T>; maxEnvelopeRepairs: number },
     hooks?: AgentHooks,
-  ): Promise<{ parsed: DocumentDraft; envelopeRepairs: number }> {
-    const schema = documentDraftSchemaFor(includeTitle);
+  ): Promise<{ parsed: T; envelopeRepairs: number }> {
     const options = { maxTokens: this.documentMaxOutputTokens };
-    const parse = (text: string): DocumentDraft =>
+    const parse = (text: string): T =>
       this.parser.parseWithSchema(text, schema, {
         stripNullObjectValues: true,
       });

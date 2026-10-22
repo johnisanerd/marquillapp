@@ -10,6 +10,7 @@ import { z, ZodError } from 'zod';
 import { ArtifactType } from 'src/database/schemas';
 import {
   documentDraftSchemaFor,
+  documentRepairSchema,
   generationSchemaFor,
   parseArtifactContent,
   postContentSchema,
@@ -98,6 +99,25 @@ describe('documentDraftSchemaFor', () => {
     expect(() =>
       documentDraftSchemaFor(false).parse({ commentary: 'Hi', html: '' }),
     ).toThrow(ZodError);
+  });
+});
+
+describe('documentRepairSchema', () => {
+  it('should expose only html to the provider', () => {
+    const jsonSchema = z.toJSONSchema(documentRepairSchema, {
+      target: 'draft-7',
+      io: 'output',
+    });
+
+    expect(jsonSchema).toMatchObject({
+      properties: { html: { type: 'string', minLength: 1 } },
+      required: ['html'],
+    });
+    expect(Object.keys(jsonSchema.properties ?? {})).toEqual(['html']);
+  });
+
+  it('should reject an empty html', () => {
+    expect(() => documentRepairSchema.parse({ html: '' })).toThrow(ZodError);
   });
 });
 

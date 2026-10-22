@@ -292,7 +292,8 @@ ${lines.join('\n')}
 DOCUMENT:
 ${candidate}
 
-Fix these violations and re-emit the complete document as "html", in the same JSON shape. Change nothing else.`;
+Fix these violations and re-emit the complete document. Change nothing else.
+Answer with JSON {"html": …} only.`;
 }
 
 /**

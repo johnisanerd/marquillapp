@@ -615,7 +615,8 @@ or page-scoped repair proves necessary.
   pinned fragment, byte-identical to the draft call. The user message is the current Candidate
   Source, the bounded violations, and "fix these, re-emit the complete document, change nothing
   else". Brief, research and feedback are dropped.
-- A Repair's `title` and `commentary` are ignored; the draft's are kept.
+- A Repair answers with `{ html }` only (`documentRepairSchema`), and the user message's last line
+  asks for exactly that; the draft's `title` and `commentary` are kept.
 
 ### 7.3 Render retries and the checkpoint (#139)
 
