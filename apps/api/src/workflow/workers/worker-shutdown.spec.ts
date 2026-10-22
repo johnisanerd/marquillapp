@@ -28,6 +28,7 @@ const makeDeps = (overrides: Partial<WorkerShutdownDeps> = {}) => {
   const deps = {
     signals,
     closables: [closable('workflow'), closable('email')],
+    listeners: [closable('events')],
     idle: jest.fn(() => {
       order.push('idle');
       return Promise.resolve();
@@ -75,6 +76,7 @@ describe('installWorkerShutdown', () => {
       expect(order).toEqual([
         'close workflow',
         'close email',
+        'close events',
         'idle',
         'close app',
         'exit 0',
@@ -96,6 +98,25 @@ describe('installWorkerShutdown', () => {
 
     job.resolve();
     await settle();
+    expect(deps.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('should keep the event listeners open when a worker is still draining', async () => {
+    const job = deferred();
+    const listener = { close: jest.fn(() => Promise.resolve()) };
+    const { deps, signals } = makeDeps({
+      closables: [{ close: () => job.promise }],
+      listeners: [listener],
+    });
+    installWorkerShutdown(deps);
+
+    signals.emit('SIGTERM');
+    await settle();
+    expect(listener.close).not.toHaveBeenCalled();
+
+    job.resolve();
+    await settle();
+    expect(listener.close).toHaveBeenCalled();
     expect(deps.exit).toHaveBeenCalledWith(0);
   });
 

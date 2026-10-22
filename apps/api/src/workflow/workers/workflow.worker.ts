@@ -242,12 +242,12 @@ async function bootstrapWorker() {
     signals: process,
     closables: [
       workflowWorker,
-      workflowEvents,
       scheduleWorker,
       avatarRefreshWorker,
       emailWorker,
       mediaUploadWorker,
     ],
+    listeners: [workflowEvents],
     idle: () => artifactRuns.idle(),
     app,
     exit: (code) => process.exit(code),

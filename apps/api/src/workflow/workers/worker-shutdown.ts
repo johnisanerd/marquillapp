@@ -22,6 +22,11 @@ export interface WorkerShutdownDeps {
   signals: SignalSource;
   /** Closed first, together: a `Worker` resolves once its active jobs finish. */
   closables: Closable[];
+  /**
+   * Closed once the workers have drained, so a failure reported while jobs
+   * finish (a `QueueEvents` stalled-job report) is still handled.
+   */
+  listeners: Closable[];
   /** Resolves once the failure handlers those jobs started have settled. */
   idle: () => Promise<void>;
   /** Closed last, since the jobs and their handlers need Redis and Mongo. */
@@ -40,9 +45,23 @@ export const readWorkerShutdownTimeoutMs = (source: EnvSource): number =>
     default: DEFAULT_WORKER_SHUTDOWN_TIMEOUT_MS,
   });
 
+const closeAll = async (
+  closables: Closable[],
+  logger: WorkerShutdownDeps['logger'],
+): Promise<void> => {
+  const closed = await Promise.allSettled(
+    closables.map((closable) => closable.close()),
+  );
+  for (const result of closed) {
+    if (result.status === 'rejected') {
+      logger.error(`A worker failed to close: ${describeError(result.reason)}`);
+    }
+  }
+};
+
 /**
  * Drains the worker on the first `SIGTERM` or `SIGINT`: close every worker,
- * letting its active jobs finish; wait for the failure handlers they started;
+ * letting its active jobs finish; close the event listeners; wait for the failure handlers they started;
  * close the app; exit 0. If that outlasts `timeoutMs`, exit 1: the job that
  * was still running stalls, and the next worker picks it up from its
  * checkpoint.
@@ -73,16 +92,8 @@ export function installWorkerShutdown(deps: WorkerShutdownDeps): void {
       deps.exit(1);
     }, deps.timeoutMs);
 
-    const closed = await Promise.allSettled(
-      deps.closables.map((closable) => closable.close()),
-    );
-    for (const result of closed) {
-      if (result.status === 'rejected') {
-        logger.error(
-          `A worker failed to close: ${describeError(result.reason)}`,
-        );
-      }
-    }
+    await closeAll(deps.closables, logger);
+    await closeAll(deps.listeners, logger);
     await deps.idle();
 
     try {
