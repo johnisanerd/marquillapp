@@ -143,6 +143,7 @@ export async function repair(
         candidate,
         violations: boundViolations(violations),
         maxEnvelopeRepairs: allowance,
+        sessionId: ctx.run.runId,
       },
       meteredHooks(ctx),
     ),

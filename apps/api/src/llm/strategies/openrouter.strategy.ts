@@ -196,6 +196,10 @@ const readText = (
   content: ChatResult['choices'][number]['message']['content'],
 ) => (typeof content === 'string' ? content : undefined);
 
+/** The model that answered, when the provider says; absent is omitted. */
+const reportedModel = (result: ChatResult): { model?: string } =>
+  result.model ? { model: result.model } : {};
+
 @Injectable()
 export class OpenRouterStrategy implements LLMStrategy {
   private client: OpenRouter;
@@ -227,6 +231,7 @@ export class OpenRouterStrategy implements LLMStrategy {
         text: '',
         usage: toUsage(result.usage, latencyMs),
         finishReason: choice.finishReason,
+        ...reportedModel(result),
       };
     }
 
@@ -240,6 +245,7 @@ export class OpenRouterStrategy implements LLMStrategy {
       text,
       usage: toUsage(result.usage, latencyMs),
       ...(choice?.finishReason ? { finishReason: choice.finishReason } : {}),
+      ...reportedModel(result),
     };
   }
 
@@ -264,6 +270,7 @@ export class OpenRouterStrategy implements LLMStrategy {
       ...(text ? { text } : {}),
       toolCalls,
       usage: toUsage(result.usage, latencyMs),
+      ...reportedModel(result),
     };
   }
 
@@ -313,6 +320,10 @@ export class OpenRouterStrategy implements LLMStrategy {
             provider: { requireParameters: true },
           }
         : {}),
+      ...(options?.reasoningEffort
+        ? { reasoning: { effort: options.reasoningEffort } }
+        : {}),
+      ...(options?.sessionId ? { sessionId: options.sessionId } : {}),
       stream: false as const,
     };
 

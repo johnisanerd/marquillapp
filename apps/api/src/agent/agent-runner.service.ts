@@ -12,7 +12,9 @@ import {
 } from '../artifact/schemas';
 import { LLMProvider, MessageRole } from '../llm/interfaces';
 import type {
+  CompletionOptions,
   LLMMessage,
+  ReasoningEffort,
   ToolCall,
   ToolDefinition,
   Usage,
@@ -41,6 +43,7 @@ import type {
   ResearchSource,
   Tool,
 } from './agent-runner.interface';
+import { readReasoningEffort } from './reasoning-effort';
 import {
   buildDocumentGenerationUserPrompt,
   buildDocumentRepairUserPrompt,
@@ -106,6 +109,18 @@ const hasResults = (
 const isToolError = (output: unknown): boolean =>
   typeof output === 'object' && output !== null && 'error' in output;
 
+/**
+ * The per-call options a call site may add. Each is included only when set,
+ * so with nothing configured a request is exactly what it was before them.
+ */
+const callOptions = (
+  reasoningEffort: ReasoningEffort | undefined,
+  sessionId: string | undefined,
+): Pick<CompletionOptions, 'reasoningEffort' | 'sessionId'> => ({
+  ...(reasoningEffort ? { reasoningEffort } : {}),
+  ...(sessionId ? { sessionId } : {}),
+});
+
 const toToolDefinition = (tool: Tool): ToolDefinition => ({
   name: tool.name,
   description: tool.description,
@@ -129,6 +144,11 @@ export class AgentRunnerService implements AgentRunner {
   private readonly researchMaxOutputTokens: number;
   private readonly generationMaxOutputTokens: number;
   private readonly documentMaxOutputTokens: number;
+  // Each effort applies to its own call sites only; unset sends none.
+  private readonly researchReasoningEffort?: ReasoningEffort;
+  private readonly generationReasoningEffort?: ReasoningEffort;
+  private readonly documentDraftReasoningEffort?: ReasoningEffort;
+  private readonly documentRepairReasoningEffort?: ReasoningEffort;
   private readonly searchWebTool: Tool;
 
   constructor(
@@ -159,6 +179,17 @@ export class AgentRunnerService implements AgentRunner {
     this.documentMaxOutputTokens = this.readPositiveInteger(
       'DOCUMENT_GENERATION_MAX_OUTPUT_TOKENS',
       DEFAULT_DOCUMENT_MAX_OUTPUT_TOKENS,
+    );
+    // An unknown effort throws here, which fails worker boot (the API never builds this service).
+    this.researchReasoningEffort = this.readEffort('RESEARCH_REASONING_EFFORT');
+    this.generationReasoningEffort = this.readEffort(
+      'GENERATION_REASONING_EFFORT',
+    );
+    this.documentDraftReasoningEffort = this.readEffort(
+      'DOCUMENT_DRAFT_REASONING_EFFORT',
+    );
+    this.documentRepairReasoningEffort = this.readEffort(
+      'DOCUMENT_REPAIR_REASONING_EFFORT',
     );
     this.searchWebTool = createSearchWebTool(
       this.configService.getOrThrow<string>('TAVILY_API_KEY'),
@@ -192,6 +223,8 @@ export class AgentRunnerService implements AgentRunner {
         maxSteps: this.researchMaxSteps,
         maxSuccessfulToolCalls: this.researchMaxSuccessfulSearches,
         model: this.researchModel,
+        reasoningEffort: this.researchReasoningEffort,
+        sessionId: input.sessionId,
       },
       hooks,
     );
@@ -219,11 +252,25 @@ export class AgentRunnerService implements AgentRunner {
     config: AgentRunConfig,
     hooks?: AgentHooks,
   ): Promise<AgentRunResult> {
-    const { system, messages, tools, maxSteps, maxSuccessfulToolCalls, model } =
-      config;
-    // A label for the usage tag; the request itself passes `model` through as-is,
-    // letting the strategy fall back to its default when it is undefined.
+    const {
+      system,
+      messages,
+      tools,
+      maxSteps,
+      maxSuccessfulToolCalls,
+      model,
+      reasoningEffort,
+      sessionId,
+    } = config;
+    // A label for the usage tag when the provider does not name the model that
+    // answered; the request itself passes `model` through as-is, letting the
+    // strategy fall back to its default when it is undefined.
     const usageModel = model ?? 'default';
+    const options: CompletionOptions = {
+      model,
+      max_tokens: this.researchMaxOutputTokens,
+      ...callOptions(reasoningEffort, sessionId),
+    };
     const toolDefinitions = tools.map(toToolDefinition);
 
     const conversation: LLMMessage[] = [
@@ -239,10 +286,10 @@ export class AgentRunnerService implements AgentRunner {
         LLMProvider.OPENROUTER,
         conversation,
         toolDefinitions,
-        { model, max_tokens: this.researchMaxOutputTokens },
+        options,
       );
       addUsage(usage, turn.usage);
-      hooks?.onUsage?.({ ...turn.usage, model: usageModel });
+      hooks?.onUsage?.({ ...turn.usage, model: turn.model ?? usageModel });
 
       if (turn.toolCalls.length === 0) {
         return { text: turn.text ?? '', steps, usage };
@@ -303,10 +350,10 @@ export class AgentRunnerService implements AgentRunner {
     const final = await this.llmService.complete(
       LLMProvider.OPENROUTER,
       conversation,
-      { model, max_tokens: this.researchMaxOutputTokens },
+      options,
     );
     addUsage(usage, final.usage);
-    hooks?.onUsage?.({ ...final.usage, model: usageModel });
+    hooks?.onUsage?.({ ...final.usage, model: final.model ?? usageModel });
 
     return { text: final.text, steps, usage };
   }
@@ -341,7 +388,17 @@ export class AgentRunnerService implements AgentRunner {
         : {}),
     };
 
-    const { text: draft } = await this.complete(messages, hooks, schema);
+    const options = {
+      model: this.generationModel,
+      ...callOptions(this.generationReasoningEffort, input.sessionId),
+    };
+
+    const { text: draft } = await this.complete(
+      messages,
+      hooks,
+      schema,
+      options,
+    );
 
     let validationError: unknown;
     try {
@@ -368,6 +425,7 @@ export class AgentRunnerService implements AgentRunner {
       ],
       hooks,
       schema,
+      options,
     );
 
     try {
@@ -411,6 +469,7 @@ export class AgentRunnerService implements AgentRunner {
       {
         schema: documentDraftSchemaFor(input.includeTitle),
         maxEnvelopeRepairs: input.maxEnvelopeRepairs,
+        sessionId: input.sessionId,
       },
       hooks,
     );
@@ -452,6 +511,7 @@ export class AgentRunnerService implements AgentRunner {
       {
         schema: documentRepairSchema,
         maxEnvelopeRepairs: input.maxEnvelopeRepairs,
+        sessionId: input.sessionId,
       },
       hooks,
     );
@@ -465,7 +525,8 @@ export class AgentRunnerService implements AgentRunner {
    * validation failure and spend a repair turn it cannot use.
    *
    * An invalid envelope gets one Zod repair turn when the caller's Repair
-   * budget allows it, and is final when it does not.
+   * budget allows it, and is final when it does not. That repair turn is
+   * part of the call it repairs, so it carries the same effort and session.
    */
   private async completeDocument<T>(
     call: 'draft' | 'Repair',
@@ -473,10 +534,24 @@ export class AgentRunnerService implements AgentRunner {
     {
       schema,
       maxEnvelopeRepairs,
-    }: { schema: ZodType<T>; maxEnvelopeRepairs: number },
+      sessionId,
+    }: {
+      schema: ZodType<T>;
+      maxEnvelopeRepairs: number;
+      sessionId?: string;
+    },
     hooks?: AgentHooks,
   ): Promise<{ parsed: T; envelopeRepairs: number }> {
-    const options = { maxTokens: this.documentMaxOutputTokens };
+    const options = {
+      model: this.generationModel,
+      maxTokens: this.documentMaxOutputTokens,
+      ...callOptions(
+        call === 'draft'
+          ? this.documentDraftReasoningEffort
+          : this.documentRepairReasoningEffort,
+        sessionId,
+      ),
+    };
     const parse = (text: string): T =>
       this.parser.parseWithSchema(text, schema, {
         stripNullObjectValues: true,
@@ -631,41 +706,55 @@ export class AgentRunnerService implements AgentRunner {
   }
 
   /**
-   * A repair turn is real spend, so it is announced like any other. Transport
-   * errors are left alone: `src/llm` already classified them as retryable or
-   * not, and this layer would only be guessing.
+   * A repair turn is real spend, so it is announced like any other, tagged
+   * with the model the provider says answered (or the requested one, when it
+   * does not say). Transport errors are left alone: `src/llm` already
+   * classified them as retryable or not, and this layer would only be guessing.
    */
   private async complete(
     messages: LLMMessage[],
-    hooks?: AgentHooks,
-    responseSchema?: ZodType,
-    options: { maxTokens?: number; call?: DocumentModelCall } = {},
+    hooks: AgentHooks | undefined,
+    responseSchema: ZodType | undefined,
+    options: {
+      model: string;
+      maxTokens?: number;
+      call?: DocumentModelCall;
+    } & Pick<CompletionOptions, 'reasoningEffort' | 'sessionId'>,
   ): Promise<{ text: string; finishReason?: string }> {
-    const { text, usage, finishReason } = await this.llmService.complete(
-      LLMProvider.OPENROUTER,
-      messages,
-      {
-        model: this.generationModel,
-        max_tokens: options.maxTokens ?? this.generationMaxOutputTokens,
-        ...(responseSchema
-          ? {
-              responseSchema: {
-                name: 'artifact_generation',
-                schema: responseSchema,
-              },
-            }
-          : {}),
-      },
-    );
+    const {
+      text,
+      usage,
+      finishReason,
+      model: answeredBy,
+    } = await this.llmService.complete(LLMProvider.OPENROUTER, messages, {
+      model: options.model,
+      max_tokens: options.maxTokens ?? this.generationMaxOutputTokens,
+      ...callOptions(options.reasoningEffort, options.sessionId),
+      ...(responseSchema
+        ? {
+            responseSchema: {
+              name: 'artifact_generation',
+              schema: responseSchema,
+            },
+          }
+        : {}),
+    });
 
     hooks?.onUsage?.({
       ...usage,
-      model: this.generationModel,
+      model: answeredBy ?? options.model,
       ...(finishReason ? { finishReason } : {}),
       ...(options.call ? { call: options.call } : {}),
     });
 
     return { text, ...(finishReason ? { finishReason } : {}) };
+  }
+
+  private readEffort(key: string): ReasoningEffort | undefined {
+    return readReasoningEffort(
+      this.configService.get<string | number>(key),
+      key,
+    );
   }
 
   private readMaxSteps(): number {

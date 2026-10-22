@@ -361,6 +361,7 @@ describe('renderPdfStep', () => {
         candidate: CANDIDATE,
         violations: { violations: [SAFE_AREA], omitted: [] },
         maxEnvelopeRepairs: 1,
+        sessionId: 'run-1',
       });
       expect(hooks.onUsage).toBeInstanceOf(Function);
     });

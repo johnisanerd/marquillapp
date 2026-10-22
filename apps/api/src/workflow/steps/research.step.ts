@@ -23,7 +23,8 @@ export const researchStep: StepHandler = async (state, ctx) => {
   const { prompt, type, stylePreset } = state.input;
 
   const research = await ctx.agent.research(
-    { prompt, type, stylePreset },
+    // The run id groups the run's calls for provider cache affinity.
+    { prompt, type, stylePreset, sessionId: ctx.run.runId },
     {
       onUsage: (usage) => {
         ctx.meter.record({

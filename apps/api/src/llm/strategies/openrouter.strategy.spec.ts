@@ -43,6 +43,8 @@ type ChatRequestPayload = {
     };
   };
   provider?: { requireParameters?: boolean };
+  reasoning?: { effort: string };
+  sessionId?: string;
   stream: boolean;
 };
 
@@ -709,6 +711,127 @@ describe('OpenRouterStrategy', () => {
           { role: MessageRole.User, content: 'hi' },
         ]),
       ).resolves.toBe('legacy');
+    });
+  });
+
+  describe('reasoning effort, session id and reported model', () => {
+    const user: LLMMessage[] = [{ role: MessageRole.User, content: 'hi' }];
+    const ok = { choices: [{ message: { content: 'hello' } }], usage };
+    const tool: ToolDefinition = {
+      name: 'lookup',
+      description: 'Look something up',
+      parameters: z.object({ q: z.string() }),
+    };
+
+    it("should send exactly today's request keys when effort and session are unset", async () => {
+      send.mockResolvedValue(ok);
+
+      await strategy.complete(user);
+
+      const request = lastChatRequest();
+      expect(Object.keys(request).sort()).toEqual([
+        'maxTokens',
+        'messages',
+        'model',
+        'stream',
+        'temperature',
+      ]);
+      expect(request).not.toHaveProperty('reasoning');
+      expect(request).not.toHaveProperty('reasoningEffort');
+      expect(request).not.toHaveProperty('sessionId');
+    });
+
+    it('should send reasoning.effort and no shorthand when complete sets an effort', async () => {
+      send.mockResolvedValue(ok);
+
+      await strategy.complete(user, { reasoningEffort: 'low' });
+
+      const request = lastChatRequest();
+      expect(request.reasoning).toEqual({ effort: 'low' });
+      expect(request).not.toHaveProperty('reasoningEffort');
+    });
+
+    it('should send reasoning.effort when completeWithTools sets an effort', async () => {
+      send.mockResolvedValue({ choices: [{ message: {} }], usage });
+
+      await strategy.completeWithTools(user, [tool], {
+        reasoningEffort: 'low',
+      });
+
+      const request = lastChatRequest();
+      expect(request.reasoning).toEqual({ effort: 'low' });
+      expect(request).not.toHaveProperty('reasoningEffort');
+    });
+
+    it('should keep requireParameters when an effort and a response schema are both set', async () => {
+      send.mockResolvedValue({
+        choices: [{ message: { content: '{}' } }],
+        usage,
+      });
+
+      await strategy.complete(user, {
+        reasoningEffort: 'low',
+        responseSchema: { name: 'out', schema: z.object({ a: z.string() }) },
+      });
+
+      const request = lastChatRequest();
+      expect(request.reasoning).toEqual({ effort: 'low' });
+      expect(request.provider).toEqual({ requireParameters: true });
+      expect(request).not.toHaveProperty('reasoningEffort');
+    });
+
+    it('should send sessionId when one is set', async () => {
+      send.mockResolvedValue(ok);
+
+      await strategy.complete(user, { sessionId: 'run-1' });
+
+      const request = lastChatRequest();
+      expect(request.sessionId).toBe('run-1');
+      expect(request).not.toHaveProperty('reasoning');
+    });
+
+    it('should report the model when complete gets one from the provider', async () => {
+      send.mockResolvedValue({ ...ok, model: 'openai/gpt-5-mini-x' });
+
+      const result = await strategy.complete(user);
+
+      expect(result.model).toBe('openai/gpt-5-mini-x');
+    });
+
+    it('should report the model when complete is truncated at the token cap', async () => {
+      send.mockResolvedValue({
+        choices: [{ message: { content: null }, finishReason: 'length' }],
+        usage,
+        model: 'openai/gpt-5-mini-x',
+      });
+
+      const result = await strategy.complete(user);
+
+      expect(result.finishReason).toBe('length');
+      expect(result.model).toBe('openai/gpt-5-mini-x');
+    });
+
+    it('should report the model when completeWithTools gets one from the provider', async () => {
+      send.mockResolvedValue({
+        choices: [{ message: {} }],
+        usage,
+        model: 'openai/gpt-5-mini-x',
+      });
+
+      const result = await strategy.completeWithTools(user, [tool]);
+
+      expect(result.model).toBe('openai/gpt-5-mini-x');
+    });
+
+    it('should omit the model key when the provider reports none', async () => {
+      send.mockResolvedValue({ ...ok, model: '' });
+      const completed = await strategy.complete(user);
+
+      send.mockResolvedValue({ choices: [{ message: {} }], usage });
+      const turn = await strategy.completeWithTools(user, [tool]);
+
+      expect(completed).not.toHaveProperty('model');
+      expect(turn).not.toHaveProperty('model');
     });
   });
 });

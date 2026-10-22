@@ -101,7 +101,7 @@ Tests per item are listed in §8.
   | `RESEARCH_REASONING_EFFORT` | research tool turns and the closing call (`agent-runner.service.ts:217-222`, `:282-286`) |
   | `GENERATION_REASONING_EFFORT` | POST/POLL `generate` and its Zod repair |
   | `DOCUMENT_DRAFT_REASONING_EFFORT` | `completeDocument('draft')` + envelope repair |
-  | `DOCUMENT_REPAIR_REASONING_EFFORT` | `completeDocument('Repair')` |
+  | `DOCUMENT_REPAIR_REASONING_EFFORT` | `completeDocument('Repair')` + envelope repair |
 
 - `complete()` stops hard-coding `this.generationModel` (`:604`, `:619`) and reports the model actually used to `onUsage` (needed by P3).
 - `.env.example`: note that an effort on a non-reasoning model makes OpenRouter require reasoning-capable providers (`requireParameters: true` is already sent with schemas), which can 404.

@@ -2,7 +2,12 @@ import type { ZodType } from 'zod';
 import type { ArtifactType } from '../database/schemas';
 import type { ArtifactContent } from '../artifact/schemas';
 import type { BoundedViolations } from '../document-source/violation';
-import type { LLMMessage, ToolCall, Usage } from '../llm/interfaces';
+import type {
+  LLMMessage,
+  ReasoningEffort,
+  ToolCall,
+  Usage,
+} from '../llm/interfaces';
 import type { StylePreset } from './style-presets.config';
 
 /**
@@ -17,13 +22,23 @@ export interface Tool<I = unknown, O = unknown> {
   execute: (input: I) => Promise<O>;
 }
 
-export interface AgentRunConfig {
+export interface AgentRunConfig extends SessionAffinity {
   system: string;
   messages: LLMMessage[];
   tools: Tool[];
   maxSteps: number;
   maxSuccessfulToolCalls?: number;
   model?: string;
+  /** Sent on every turn and the closing call. Unset sends none. */
+  reasoningEffort?: ReasoningEffort;
+}
+
+/**
+ * Groups every LLM call made for one input under one provider session, for
+ * prompt-cache affinity. Steps pass the run id.
+ */
+export interface SessionAffinity {
+  sessionId?: string;
 }
 
 /** One turn of the loop that asked for tools, plus what running them produced. */
@@ -52,13 +67,13 @@ export interface ResearchResult {
   sources: ResearchSource[];
 }
 
-export interface ResearchInput {
+export interface ResearchInput extends SessionAffinity {
   prompt: string;
   type: ArtifactType;
   stylePreset?: StylePreset;
 }
 
-export interface GenerateInput {
+export interface GenerateInput extends SessionAffinity {
   type: ArtifactType;
   prompt: string;
   stylePreset?: StylePreset;
@@ -77,7 +92,7 @@ export interface DocumentRefineInput {
 }
 
 /** A DOCUMENT draft (spec §7.5), INITIAL or REFINE. */
-export interface DocumentGenerateInput {
+export interface DocumentGenerateInput extends SessionAffinity {
   prompt: string;
   stylePreset?: StylePreset;
   research?: ResearchResult;
@@ -99,7 +114,7 @@ export interface DocumentGenerateInput {
  * One static or render Repair (spec §7.2). The system message is the draft's,
  * so `fragment` and `includeTitle` must be the draft's too.
  */
-export interface DocumentRepairInput {
+export interface DocumentRepairInput extends SessionAffinity {
   fragment: string;
   includeTitle: boolean;
   /** The Candidate Source the violations were found in. */
