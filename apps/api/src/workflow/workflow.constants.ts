@@ -50,6 +50,13 @@ export const DOCUMENT_RUN_DEADLINE_MS = 6 * 60 * 1000;
 export const RENDER_RETRY_DELAY_MS = 2000;
 
 /**
+ * A render waits for a Browserless slot only while this much of the job
+ * attempt would still be left (M4.2): its wait is bounded by
+ * `min(BROWSERLESS_SLOT_WAIT_MAX_MS, time left - this)`.
+ */
+export const RENDER_SLOT_WAIT_RESERVE_MS = 20_000;
+
+/**
  * How long a DOCUMENT run keeps Candidate Source text (spec §11.5): the
  * `acceptedCandidate` checkpoint and a failed run's last candidate. The run
  * record and its check outcomes are kept indefinitely.
