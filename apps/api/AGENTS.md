@@ -44,11 +44,15 @@ This is a NestJS v11 backend that generates and schedules LinkedIn posts using A
 The application runs as **two separate processes**:
 
 1. **HTTP server** (`src/main.ts`) — handles REST API requests
-2. **Worker** (`src/workflow/workers/workflow.worker.ts`) — a standalone BullMQ worker that bootstraps a full NestJS `ApplicationContext` (not `NestFactory.create`) to get access to injected services. It processes four queues:
-   - `workflow` — AI post generation pipelines
+2. **Worker** (`src/workflow/workers/workflow.worker.ts`) — a standalone BullMQ worker that bootstraps a full NestJS `ApplicationContext` (not `NestFactory.create`) to get access to injected services. It processes these queues:
+   - `workflow` — POST and POLL artifact runs (and DOCUMENT jobs enqueued before the queues split)
+   - `workflow-document` — DOCUMENT artifact runs, on their own queue so a burst of documents can't hold up text runs. `WorkflowQueue.addArtifactRunJob` picks the queue with `queueNameFor(type)`; one `ArtifactRunProcessor` serves both
    - `post-schedule` — publishes LinkedIn posts at scheduled times
    - `linkedin-avatar-refresh` — refreshes expiring LinkedIn profile photos
    - `email` — transactional email via Resend
+   - `media-upload` — uploads post media to LinkedIn
+
+   **Deploy order:** a release that adds or renames a queue ships the worker first, then the API, so nothing is enqueued on a queue no worker consumes.
 
 ### AI Workflow engine
 
@@ -127,6 +131,8 @@ Optional integer settings are read with `readIntEnv` (`src/common/env.ts`): unse
 - `MONGO_MAX_POOL_SIZE` (default `10`, min 1), `MONGO_MIN_POOL_SIZE` (default `2`, must not exceed max) — Mongo connection pool, per process (`mongoOptionsFrom` in `src/database/mongo-options.ts`). **Sizing rule:** the worker's pool must be at least its total worker concurrency + 10.
 - `FEATURE_TIER_CACHE_TTL_MS` (default `60000`; `0` disables) — API and worker. How long `FeatureGatingService` caches a tier document in process. Tiers change only through the seed script, so a re-seed applies within this window; the subscription is never cached.
 - `OPENROUTER_TIMEOUT_MS` (default `240000`, min 1), `OPENROUTER_MAX_ATTEMPTS` (default `3`, min 1), `OPENROUTER_RETRY_BASE_MS` (default `1000`), `OPENROUTER_RETRY_MAX_DELAY_MS` (default `15000`), `OPENROUTER_RETRY_BUDGET_MS` (default `45000`) — the app-owned retry loop in `OpenRouterStrategy` (`src/llm/strategies/openrouter-retry.ts`); the SDK's retries are off. Per try: a timeout of `min(OPENROUTER_TIMEOUT_MS, the call's timeoutMs, time left before its deadlineAt)` (research turns ask 45 s; DOCUMENT drafts and Repairs pass the run deadline). Retryable failures (`toLLMError`: 408, 429, 5xx, transport and timeout errors, provider errors after `200 OK`) sleep `Retry-After` or full jitter; a call stops when tries run out, when its total sleep would pass the budget, or when the next try would start past its deadline. A caller's abort is never retried. `OPENROUTER_MAX_ATTEMPTS=1` restores single-try behaviour. Read by both processes, so a bad value fails either boot.
+- `WORKFLOW_TEXT_CONCURRENCY`, `WORKFLOW_DOCUMENT_CONCURRENCY` (default `1`, min 1; worker only) — how many jobs the `workflow` and `workflow-document` workers run at once (`workflowWorkerOptions` in `src/workflow/workers/workflow-worker-options.ts`). Production starts at 10 and 2; 2 matches the Browserless Free plan's concurrent browsers. Count both in the Mongo pool sizing rule.
+- `WORKFLOW_LOCK_DURATION_MS` (default `30000`, min 1000; worker only) — the BullMQ job lock on both artifact-run queues.
 - `WORKER_SHUTDOWN_TIMEOUT_MS` (default `120000`; worker only) — on the first `SIGTERM` or `SIGINT` the worker stops taking jobs, lets running ones finish, waits for their failure handlers, closes the app and exits 0; past this timeout it exits 1, and the unfinished job stalls and resumes on the next worker (`worker-shutdown.ts`). The host's drain window must be longer: on Railway, `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=130` (see `docs/monorepo.md`). Start the worker with `node` directly; a package-manager wrapper can swallow `SIGTERM`.
 
 ## Production
