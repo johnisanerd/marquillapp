@@ -375,8 +375,11 @@ export type RunFailOutcome = 'FAILED' | 'ALREADY_ENDED';
  */
 export interface RunDeadlineGuard {
   assertTimeLeft(step: WorkflowStep, before: string): void;
-  /** Milliseconds left before the deadline; `0` once it has passed. */
-  remainingMs(): number;
+  /**
+   * Milliseconds left before the deadline, less `reserveMs` (default `0`);
+   * never negative.
+   */
+  remainingMs(reserveMs?: number): number;
 }
 
 /**
