@@ -28,6 +28,7 @@ import { DesignSystemsService } from '../../design-system/design-systems.service
 import { findFile, uploadFile } from '../../s3';
 import { CreditMeterService } from '../../feature-gating/credit-meter.service';
 import { FeatureGatingService } from '../../feature-gating/feature-gating.service';
+import { InflightRunLimiter } from '../inflight-run-limiter';
 import { RedisService } from '../../redis/redis.service';
 import { WorkflowRunService } from '../workflow-run.service';
 import { BuildInput } from '../engine/workflow.types';
@@ -80,6 +81,7 @@ async function bootstrapWorker() {
     creditMeter: app.get(CreditMeterService),
     featureGating: app.get(FeatureGatingService),
     runs: app.get(WorkflowRunService),
+    inflight: app.get(InflightRunLimiter),
     redis: app.get(RedisService).getClient(),
     logger,
   });
