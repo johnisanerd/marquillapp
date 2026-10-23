@@ -37,7 +37,7 @@ describe('InflightRunLimiter', () => {
   });
 
   describe('reserve', () => {
-    it("should run the reserve script on the user's key with the limit, lease and run id", async () => {
+    it("should run the reserve script on the user's key with the limit, lease and run id when the cap is on", async () => {
       const { limiter, client } = makeLimiter({
         MAX_INFLIGHT_RUNS_PER_USER: '3',
         RUN_INFLIGHT_LEASE_SECONDS: '60',
@@ -55,7 +55,7 @@ describe('InflightRunLimiter', () => {
       );
     });
 
-    it('should default the lease to 1800 seconds', async () => {
+    it('should default the lease to 1800 seconds when RUN_INFLIGHT_LEASE_SECONDS is unset', async () => {
       const { limiter, client } = makeLimiter({
         MAX_INFLIGHT_RUNS_PER_USER: '3',
       });
@@ -97,7 +97,7 @@ describe('InflightRunLimiter', () => {
   });
 
   describe('release', () => {
-    it("should remove the run id from the user's set", async () => {
+    it("should remove the run id from the user's set when the run ends", async () => {
       const { limiter, client } = makeLimiter({
         MAX_INFLIGHT_RUNS_PER_USER: '2',
       });
@@ -107,7 +107,7 @@ describe('InflightRunLimiter', () => {
       expect(client.zrem).toHaveBeenCalledWith('workflow:inflight:u1', 'r1');
     });
 
-    it('should swallow a Redis failure', async () => {
+    it('should resolve when the Redis release fails', async () => {
       const { limiter, client } = makeLimiter({
         MAX_INFLIGHT_RUNS_PER_USER: '2',
       });
@@ -118,7 +118,7 @@ describe('InflightRunLimiter', () => {
   });
 
   describe('refresh', () => {
-    it('should run the refresh script with the lease and run id', async () => {
+    it('should run the refresh script with the lease and run id when a job attempt starts', async () => {
       const { limiter, client } = makeLimiter({
         MAX_INFLIGHT_RUNS_PER_USER: '2',
         RUN_INFLIGHT_LEASE_SECONDS: '30',
@@ -135,7 +135,7 @@ describe('InflightRunLimiter', () => {
       );
     });
 
-    it('should swallow a Redis failure', async () => {
+    it('should resolve when the Redis refresh fails', async () => {
       const { limiter, client } = makeLimiter({
         MAX_INFLIGHT_RUNS_PER_USER: '2',
       });

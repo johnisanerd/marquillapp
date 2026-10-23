@@ -234,12 +234,12 @@ describe('RenderSlots', () => {
 });
 
 describe('slotPollDelayMs', () => {
-  it('should poll between 250 and 500 ms on the first wait', () => {
+  it('should pause 250 to 500 ms when the first try found no slot', () => {
     expect(slotPollDelayMs(0, () => 0)).toBe(250);
     expect(slotPollDelayMs(0, () => 1)).toBe(500);
   });
 
-  it('should poll between 500 ms and 1 s from the second wait on', () => {
+  it('should pause 500 ms to 1 s when a later try found no slot', () => {
     expect(slotPollDelayMs(1, () => 0)).toBe(500);
     expect(slotPollDelayMs(1, () => 1)).toBe(1_000);
     expect(slotPollDelayMs(9, () => 1)).toBe(1_000);
