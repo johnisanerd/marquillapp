@@ -1,3 +1,6 @@
+// Type-only: artifact.schema imports FailureCode from here.
+import type { ArtifactType } from '../database/schemas/artifact.schema';
+
 export enum WorkflowStep {
   RESOLVE_INPUT = 'RESOLVE_INPUT',
   RESEARCH = 'RESEARCH',
@@ -6,7 +9,16 @@ export enum WorkflowStep {
   PERSIST_VERSION = 'PERSIST_VERSION',
 }
 
+/** POST and POLL runs, and DOCUMENT jobs enqueued before the split. */
 export const QUEUE_NAME = 'workflow';
+/** DOCUMENT runs, on their own queue so a burst of documents can't hold up text runs. */
+export const DOCUMENT_QUEUE_NAME = 'workflow-document';
+export type WorkflowQueueName = typeof QUEUE_NAME | typeof DOCUMENT_QUEUE_NAME;
+
+/** The queue an artifact run of `type` is enqueued on. */
+export const queueNameFor = (type: ArtifactType): WorkflowQueueName =>
+  (type as string) === 'DOCUMENT' ? DOCUMENT_QUEUE_NAME : QUEUE_NAME;
+
 export const SCHEDULE_QUEUE_NAME = 'post-schedule';
 export const LINKEDIN_AVATAR_REFRESH_QUEUE_NAME = 'linkedin-avatar-refresh';
 export const LINKEDIN_AVATAR_REFRESH_JOB_NAME = 'refresh-linkedin-avatar';
