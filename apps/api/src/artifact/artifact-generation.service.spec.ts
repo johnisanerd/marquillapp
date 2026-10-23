@@ -634,7 +634,7 @@ describe('ArtifactGenerationService', () => {
         usageModel as never,
         {} as never,
         {} as never,
-        {},
+        {} as never,
       );
       const gated = makeService();
       const service = new ArtifactGenerationService(

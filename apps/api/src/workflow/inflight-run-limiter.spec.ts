@@ -7,7 +7,7 @@ import {
 } from './inflight-run-limiter';
 import { RunTooManyInFlightException } from './run-too-many-in-flight.exception';
 
-const makeLimiter = (env: Record<string, string> = {}) => {
+const makeLimiter = (env: Record<string, string | undefined> = {}) => {
   const client = {
     eval: jest.fn().mockResolvedValue(1),
     zrem: jest.fn().mockResolvedValue(1),

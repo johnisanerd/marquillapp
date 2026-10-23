@@ -646,7 +646,7 @@ describe('ArtifactRunProcessor', () => {
         usageModel as never,
         {} as never,
         {} as never,
-        {},
+        {} as never,
       );
       const creditMeter = new CreditMeterService(
         { get: () => undefined } as never,
