@@ -257,9 +257,15 @@ export type StepHandlerMap = Partial<Record<WorkflowStep, StepHandler>>;
  * measures and never decides; `RENDER_PDF` judges the facts.
  */
 export interface DocumentRenderer {
+  /**
+   * One render session. It first waits up to `maxSlotWaitMs` for a Browserless
+   * slot, and throws `RenderSlotUnavailableError` without a session if none
+   * comes free.
+   */
   render(
     definition: DesignSystemDefinition,
     documentSource: string,
+    options?: { maxSlotWaitMs?: number },
   ): Promise<RenderSessionResult>;
 }
 
