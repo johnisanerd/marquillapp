@@ -26,7 +26,10 @@ describe('DocumentRendererService', () => {
     const slots = {
       acquire: jest.fn(() => Promise.resolve({ waitedMs: 1_500, release })),
     };
-    const service = new DocumentRendererService(config as never, slots as never);
+    const service = new DocumentRendererService(
+      config as never,
+      slots as never,
+    );
     const result = { pageCount: 3 } as unknown as RenderSessionResult;
     const renderSession = jest
       .spyOn(

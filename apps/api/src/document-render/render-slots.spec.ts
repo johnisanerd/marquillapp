@@ -213,7 +213,10 @@ describe('RenderSlots', () => {
       await first.release();
 
       expect(mocks.redis.zrem).toHaveBeenCalledTimes(1);
-      expect(mocks.redis.zrem).toHaveBeenCalledWith(RENDER_SLOTS_KEY, 'token-1');
+      expect(mocks.redis.zrem).toHaveBeenCalledWith(
+        RENDER_SLOTS_KEY,
+        'token-1',
+      );
       expect(mocks.redis.held(RENDER_SLOTS_KEY)).toBe(1);
     });
 
