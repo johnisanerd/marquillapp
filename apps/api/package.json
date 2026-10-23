@@ -22,6 +22,7 @@
     "start:worker": "node dist/workflow/workers/workflow.worker.js",
     "db:migrate:user-indexes": "ts-node src/scripts/migrate-user-identity-indexes.ts",
     "db:migrate:run-candidate-sources": "ts-node src/scripts/migrate-run-candidate-sources.ts",
+    "db:migrate:artifact-library-index": "ts-node src/scripts/migrate-artifact-library-index.ts",
     "purge:template-documents": "ts-node src/scripts/purge-template-documents.ts",
     "review:credit-economics": "ts-node src/scripts/run-credit-economics-review.ts",
     "seed:tiers:temp": "ts-node src/scripts/temp-seed-tiers.ts",
